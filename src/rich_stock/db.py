@@ -16,6 +16,12 @@
          return_pct, pnl_per_unit, closed)
     - 각 CLI 스크립트가 이미 --trades-csv로 내보내던 것과 동일한 컬럼 구성. `load_trades_csv()`가
       해당 CSV를 DuckDB의 네이티브 CSV 리더(read_csv_auto)로 그대로 읽어 적재한다.
+  decisions(decision_id, ticker, technique, signal_date, action, status, buy_date, buy_price,
+            quantity, sell_date, sell_price, pnl, return_pct, note, created_at, updated_at)
+    - 실제 매수/보류 판단과 매도 결과를 기록하는 개인 매매일지. signals/trades와 달리 순수
+      연구용 백테스트가 아니라 실제 의사결정 기록이라 scripts/local/(git 미추적)의 CLI에서만
+      쓰는 걸 전제로 한다 — 이 모듈(db.py) 자체는 공개 저장소에 있지만, 여기 담기는 실제 데이터
+      (.cache/rich_stock.duckdb)는 완전히 로컬 전용이다.
 """
 
 from __future__ import annotations
@@ -61,6 +67,24 @@ CREATE TABLE IF NOT EXISTS trades (
     return_pct DOUBLE,
     pnl_per_unit DOUBLE,
     closed BOOLEAN
+);
+CREATE TABLE IF NOT EXISTS decisions (
+    decision_id VARCHAR PRIMARY KEY,
+    ticker VARCHAR,
+    technique VARCHAR,
+    signal_date DATE,
+    action VARCHAR,
+    status VARCHAR,
+    buy_date DATE,
+    buy_price DOUBLE,
+    quantity DOUBLE,
+    sell_date DATE,
+    sell_price DOUBLE,
+    pnl DOUBLE,
+    return_pct DOUBLE,
+    note VARCHAR,
+    created_at TIMESTAMP DEFAULT current_timestamp,
+    updated_at TIMESTAMP DEFAULT current_timestamp
 );
 """
 
@@ -206,6 +230,90 @@ def save_backtest_results(
     finally:
         conn.close()
     return run_id
+
+
+def new_decision_id(ticker: str) -> str:
+    return f"dec_{ticker}_{uuid.uuid4().hex[:8]}"
+
+
+def record_buy(
+    conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+    buy_price: float,
+    technique: str | None = None,
+    signal_date: str | None = None,
+    buy_date: str | None = None,
+    quantity: float | None = None,
+    note: str | None = None,
+) -> str:
+    """매수 결정을 기록한다(status='open'). Returns: decision_id."""
+    decision_id = new_decision_id(ticker)
+    conn.execute(
+        """
+        INSERT INTO decisions (decision_id, ticker, technique, signal_date, action, status,
+                                buy_date, buy_price, quantity, note)
+        VALUES (?, ?, ?, ?, 'buy', 'open', COALESCE(?, current_date), ?, ?, ?)
+        """,
+        [decision_id, ticker, technique, signal_date, buy_date, buy_price, quantity, note],
+    )
+    return decision_id
+
+
+def record_skip(
+    conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+    technique: str | None = None,
+    signal_date: str | None = None,
+    note: str | None = None,
+) -> str:
+    """신호를 보고 매수하지 않기로 한 결정을 기록한다(status='skipped'). Returns: decision_id."""
+    decision_id = new_decision_id(ticker)
+    conn.execute(
+        """
+        INSERT INTO decisions (decision_id, ticker, technique, signal_date, action, status, note)
+        VALUES (?, ?, ?, ?, 'skip', 'skipped', ?)
+        """,
+        [decision_id, ticker, technique, signal_date, note],
+    )
+    return decision_id
+
+
+def close_decision(
+    conn: duckdb.DuckDBPyConnection,
+    decision_id: str,
+    sell_price: float,
+    sell_date: str | None = None,
+) -> None:
+    """매도 결과를 기록하고 status를 'closed'로 바꾼다. pnl/return_pct는 buy_price*quantity 기준으로 자동 계산."""
+    row = conn.execute(
+        "SELECT buy_price, quantity, status FROM decisions WHERE decision_id = ?", [decision_id]
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"decision_id를 찾을 수 없습니다: {decision_id}")
+    buy_price, quantity, status = row
+    if status != "open":
+        raise ValueError(f"'{decision_id}'는 status='{status}'라 매도 처리할 수 없습니다(open만 가능).")
+    qty = quantity if quantity is not None else 1.0
+    pnl = (sell_price - buy_price) * qty
+    return_pct = (sell_price / buy_price - 1) * 100 if buy_price else None
+    conn.execute(
+        """
+        UPDATE decisions
+        SET sell_date = COALESCE(?, current_date), sell_price = ?, pnl = ?, return_pct = ?,
+            status = 'closed', updated_at = current_timestamp
+        WHERE decision_id = ?
+        """,
+        [sell_date, sell_price, pnl, return_pct, decision_id],
+    )
+
+
+def find_open_decision(conn: duckdb.DuckDBPyConnection, ticker: str) -> str | None:
+    """해당 종목의 가장 최근 open(매수 후 미매도) 결정의 decision_id를 찾는다. 없으면 None."""
+    row = conn.execute(
+        "SELECT decision_id FROM decisions WHERE ticker = ? AND status = 'open' ORDER BY buy_date DESC LIMIT 1",
+        [ticker],
+    ).fetchone()
+    return row[0] if row else None
 
 
 def load_trades_csv(conn: duckdb.DuckDBPyConnection, run_id: str, technique: str, csv_path: str | Path) -> int:
