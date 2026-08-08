@@ -48,13 +48,20 @@ def main() -> None:
     api.show_account_password_window()
     input("등록 창에서 저장 완료하셨으면 여기서 Enter를 눌러주세요...")
 
+    print(f"\n[계좌번호 확인용] repr={account_no!r} len={len(account_no)}")
+
     print(f"\n[{account_no}] 예수금 조회 중...")
     deposit = api.query_deposit(account_no)
     if deposit is None:
         print("  예수금 조회 실패 — 계좌비밀번호 등록이 안 됐거나 다른 서버 오류일 수 있습니다.")
     else:
         for k, v in deposit.items():
-            print(f"  {k}: {v}")
+            print(f"  {k}: {v!r}")
+
+    print(f"\n[{account_no}] 예수금 필드 전체 디버그 덤프...")
+    debug = api.query_deposit_debug(account_no)
+    for k, v in debug.items():
+        print(f"  {k}: {v!r}")
 
     print(f"\n[{account_no}] 보유종목 조회 중...")
     holdings = api.query_holdings(account_no)

@@ -163,6 +163,30 @@ class KiwoomAPI:
             "주문가능금액": self.get_comm_data("opw00001", "예수금상세현황요청", 0, "주문가능금액"),
         }
 
+    # opw00001 응답에 흔히 포함되는 필드 전체 목록 — query_deposit의 3개 필드가 전부 빈 값으로
+    # 나오는 문제를 진단하기 위한 용도. 실제 계좌엔 잔고가 있는데(HTS 확인됨) 코드로는 빈 값이
+    # 나온 상황 — 필드명이 틀렸는지, TR 자체가 비어있는지 구분하려고 넓게 찍어본다.
+    _DEPOSIT_DEBUG_FIELDS = [
+        "예수금", "출금가능금액", "주문가능금액", "당일투자원금", "추정예탁자산",
+        "가수도정산금", "d+2추정예수금", "D+2추정예수금", "유가잔고평가액", "예탁자산평가액",
+        "총대출금", "총평가금액", "총평가손익금", "증거금율", "매도담보대출금",
+    ]
+
+    def query_deposit_debug(self, account_no: str, password: str = "") -> dict:
+        """opw00001의 알려진 필드를 전부 찍어 실제로 뭐가 채워지는지 확인하는 진단용 메서드."""
+        self.set_input_value("계좌번호", account_no)
+        self.set_input_value("비밀번호", password)
+        self.set_input_value("비밀번호입력매체구분", "00")
+        self.set_input_value("조회구분", "2")
+        ok = self.comm_rq_data("예수금상세현황요청", "opw00001", 0, "2000")
+        if not ok:
+            print(f"[query_deposit_debug] TR 응답 타임아웃 — 서버 메시지: {self.last_server_message}")
+            return {}
+        return {
+            field: self.get_comm_data("opw00001", "예수금상세현황요청", 0, field)
+            for field in self._DEPOSIT_DEBUG_FIELDS
+        }
+
     def query_holdings(self, account_no: str, password: str = "") -> list[dict] | None:
         """계좌평가잔고내역요청(opw00018) — 보유종목 리스트(다건, GetRepeatCnt로 행 수 조회).
 
