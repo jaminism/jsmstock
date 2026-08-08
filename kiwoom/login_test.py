@@ -63,6 +63,11 @@ def main() -> None:
     for k, v in debug.items():
         print(f"  {k}: {v!r}")
 
+    print(f"\n[{account_no}] 대안 TR(opw00004 계좌평가현황요청) 시도...")
+    summary = api.query_account_summary(account_no)
+    for k, v in summary.items():
+        print(f"  {k}: {v!r}")
+
     print(f"\n[{account_no}] 보유종목 조회 중...")
     holdings = api.query_holdings(account_no)
     if holdings is None:

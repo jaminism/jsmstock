@@ -187,6 +187,26 @@ class KiwoomAPI:
             for field in self._DEPOSIT_DEBUG_FIELDS
         }
 
+    # opw00004(계좌평가현황요청) — opw00001이 모의투자 서버에서 데이터를 안 주는 경우를 대비한
+    # 대안 TR. opw00001과 달리 예수금 외에 보유종목 리스트도 함께 준다(레코드명이 두 개로 분리:
+    # 단건 요약은 rqname 그대로, 보유종목 리스트는 "계좌평가현황요청" 레코드명 사용).
+    _ACCOUNT_SUMMARY_FIELDS = ["예수금", "총평가금액", "총손익금액", "총수익률(%)", "추정예탁자산"]
+
+    def query_account_summary(self, account_no: str, password: str = "") -> dict:
+        """opw00004(계좌평가현황요청) — opw00001 대안. 모의투자에서 opw00001이 빈 값만 줄 때 시도."""
+        self.set_input_value("계좌번호", account_no)
+        self.set_input_value("비밀번호", password)
+        self.set_input_value("상장폐지조회구분", "0")
+        self.set_input_value("비밀번호입력매체구분", "00")
+        ok = self.comm_rq_data("계좌평가현황요청", "opw00004", 0, "2002")
+        if not ok:
+            print(f"[query_account_summary] TR 응답 타임아웃 — 서버 메시지: {self.last_server_message}")
+            return {}
+        return {
+            field: self.get_comm_data("opw00004", "계좌평가현황요청", 0, field)
+            for field in self._ACCOUNT_SUMMARY_FIELDS
+        }
+
     def query_holdings(self, account_no: str, password: str = "") -> list[dict] | None:
         """계좌평가잔고내역요청(opw00018) — 보유종목 리스트(다건, GetRepeatCnt로 행 수 조회).
 
