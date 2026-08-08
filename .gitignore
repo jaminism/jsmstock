@@ -32,3 +32,12 @@ harness-100-main/
 
 # 키움 Open API+ 연동용 32비트 가상환경 (로컬 전용, requirements-kiwoom32.txt로 재현 가능)
 .venv32/
+
+# 키움 REST API 인증키 (appkey/secretkey) — 절대 커밋 금지
+kiwoom_credentials.json
+
+# 계좌번호/잔고가 찍힌 스크린샷 등 임시 캡처 파일 — 로컬 전용
+mm.png
+
+# 키움 REST API 전체 명세(2.4MB) — 키움 공식 문서 원본이라 로컬 참고용으로만 보관, 재배포 안 함
+kiwoom-rest-api-spec.json
