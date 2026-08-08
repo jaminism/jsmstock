@@ -1,0 +1,4 @@
+# 키움 Open API+ 연동 전용 — 반드시 32비트 Python venv(.venv32)에 설치할 것
+# 설치: .venv32\Scripts\python.exe -m pip install -r requirements-kiwoom32.txt
+PyQt5>=5.15
+pywin32>=306
