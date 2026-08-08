@@ -9,13 +9,9 @@ dist/
 # 계정 정보(모의투자 id/password 등) 포함 — 커밋 금지
 info.md
 
-# 강의 원자료(저작권 있는 PDF/docx/pptx/이미지, ~500MB) — 로컬 전용, 원격 저장소에 올리지 않음
-step_0_common/
-step_1/
-step_2/
-step_3/
-step_4/
-step_5/
+# 강의 원자료(저작권 있는 PDF/docx/pptx/이미지, ~470MB) — 로컬 전용, 원격 저장소에 올리지 않음.
+# common/s1~s6로 코드네임 통일(예전 step_N 폴더명, 기법 실명 하위폴더는 정리됨)
+materials/
 report/
 
 # 유료 강의 내용을 인용/정리한 리서치 노트 — 원본 자료와 마찬가지로 로컬 전용, 원격 유출 방지
