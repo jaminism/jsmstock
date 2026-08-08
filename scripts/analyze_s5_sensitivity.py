@@ -1,4 +1,4 @@
-"""K2플러스 손익구조 파라미터 민감도 분석.
+"""S5 손익구조 파라미터 민감도 분석.
 
 배경: 기본 파라미터(profit_target_pct=0.07, stop_loss_pct=-0.07)로 2021~2024 전종목 백테스트 시
 CAGR+68%, 승률89%, 샤프9.39라는 비정상적으로 좋은 결과가 나왔다([[project-kplus-backtest-engine]]
@@ -22,13 +22,13 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from rich_stock.backtest.engine import run_k2_plus_backtest
-from rich_stock.config import K2PlusConfig
+from rich_stock.backtest.engine import run_s5_backtest
+from rich_stock.config import S5Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
 
 
-def _print_sweep(title: str, ohlcv, base: K2PlusConfig, field: str, values: list) -> None:
+def _print_sweep(title: str, ohlcv, base: S5Config, field: str, values: list) -> None:
     header = (
         f"{field}={'값':<8} {'신호수':>7} {'신호승률':>8} {'PF(신호)':>9} "
         f"{'실행건':>6} {'승률':>7} {'CAGR':>9} {'MDD':>8} {'샤프':>6}"
@@ -38,7 +38,7 @@ def _print_sweep(title: str, ohlcv, base: K2PlusConfig, field: str, values: list
     print("-" * len(header))
     for v in values:
         config = dataclasses.replace(base, **{field: v})
-        result = run_k2_plus_backtest(ohlcv, config)
+        result = run_s5_backtest(ohlcv, config)
         m = result.metrics
         s = m.signal_level
         print(
@@ -48,7 +48,7 @@ def _print_sweep(title: str, ohlcv, base: K2PlusConfig, field: str, values: list
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="K2플러스 민감도 분석")
+    parser = argparse.ArgumentParser(description="S5 민감도 분석")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--min-market-cap", type=float, default=0)
@@ -65,7 +65,7 @@ def main() -> None:
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
     print(f"[kplus-sensitivity] {len(ohlcv)}종목 확보. 스윕 시작...")
 
-    base = K2PlusConfig()
+    base = S5Config()
 
     _print_sweep(
         "익절 목표(profit_target_pct) — 기본 0.07. 넓힐수록 '좁은 목표가 쉽게 걸린다' 가설을 검증",

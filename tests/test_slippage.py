@@ -1,7 +1,7 @@
 import pandas as pd
 
-from rich_stock.backtest.engine import apply_slippage, run_k2_plus_backtest
-from rich_stock.config import K2PlusConfig
+from rich_stock.backtest.engine import apply_slippage, run_s5_backtest
+from rich_stock.config import S5Config
 from rich_stock.strategies.base import Fill, Trade
 
 
@@ -51,8 +51,8 @@ def test_k2_plus_backtest_with_slippage_degrades_relative_to_zero_slippage():
     df["TradingValue"] = 100_000_000_000
     ohlcv = {"TEST": df}
 
-    baseline = run_k2_plus_backtest(ohlcv, K2PlusConfig(slippage_pct=0.0))
-    slipped = run_k2_plus_backtest(ohlcv, K2PlusConfig(slippage_pct=0.02))
+    baseline = run_s5_backtest(ohlcv, S5Config(slippage_pct=0.0))
+    slipped = run_s5_backtest(ohlcv, S5Config(slippage_pct=0.02))
 
     assert len(baseline.trades) == 1
     assert len(slipped.trades) == 1

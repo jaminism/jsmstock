@@ -1,7 +1,7 @@
 import pandas as pd
 
-from rich_stock.config import SRConfig
-from rich_stock.strategies.sr import backtest_ticker, detect_sr_signals
+from rich_stock.config import S1Config
+from rich_stock.strategies.s1 import backtest_ticker, detect_s1_signals
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -29,8 +29,8 @@ def test_detect_signal_on_fresh_limit_up():
     # day0: 기준가(전일종가 role) / day1: 상한가(진짜, 고가=종가) / 이후 하락
     closes = [10000, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 10000, 10000]
     df = make_df(closes)
-    config = SRConfig()
-    signals = detect_sr_signals(df, config)
+    config = S1Config()
+    signals = detect_s1_signals(df, config)
     assert len(signals) == 1
     sig = signals[0]
     assert sig.ul_index == 1
@@ -44,7 +44,7 @@ def test_consecutive_limit_up_counts_once():
     closes = [10000, 13000, 16900, 16000, 15000]  # day2도 상한가(30%) 연속
     highs = closes
     df = make_df(closes, highs=highs)
-    signals = detect_sr_signals(df, SRConfig())
+    signals = detect_s1_signals(df, S1Config())
     assert len(signals) == 1
     assert signals[0].ul_index == 1
 
@@ -52,7 +52,7 @@ def test_consecutive_limit_up_counts_once():
 def test_below_trading_value_filter_excluded():
     closes = [10000, 13000, 12000, 11000, 10000]
     df = make_df(closes, trading_value=1_000_000_000)  # 10억, 500억 미달
-    signals = detect_sr_signals(df, SRConfig())
+    signals = detect_s1_signals(df, S1Config())
     assert signals == []
 
 
@@ -68,7 +68,7 @@ def test_entry_and_target_exit_full_cycle():
     highs[3] = 13100
     lows[3] = 12600
     df = make_df(closes, highs=highs, lows=lows)
-    trades = backtest_ticker(df, "TEST", SRConfig())
+    trades = backtest_ticker(df, "TEST", S1Config())
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[0].reason == "entry_r1"
@@ -89,7 +89,7 @@ def test_stop_loss_at_r3():
     lows[4] = 9800  # day4: R3(10000) 하회 -> 손절
     highs[4] = 10200
     df = make_df(closes, highs=highs, lows=lows)
-    trades = backtest_ticker(df, "TEST", SRConfig())
+    trades = backtest_ticker(df, "TEST", S1Config())
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[-1].reason == "exit_stop_r3"
@@ -105,7 +105,7 @@ def test_forced_exit_after_hold_days():
     highs[1] = closes[1]  # 상한가일: 고가==종가여야 '진짜' 상한가로 판정됨
     lows[2], highs[2] = 11800, 12200  # entry at R1=12000
     df = make_df(closes, highs=highs, lows=lows)
-    trades = backtest_ticker(df, "TEST", SRConfig(hold_days=4))
+    trades = backtest_ticker(df, "TEST", S1Config(hold_days=4))
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[-1].reason == "exit_forced_hold"
@@ -118,7 +118,7 @@ def test_no_entry_when_r1_never_touched():
     highs = [c + 10 for c in closes]
     lows = [c - 10 for c in closes]
     df = make_df(closes, highs=highs, lows=lows)
-    trades = backtest_ticker(df, "TEST", SRConfig())
+    trades = backtest_ticker(df, "TEST", S1Config())
     assert trades == []
 
 
@@ -132,7 +132,7 @@ def test_addon_and_breakeven_partial():
     lows[4], highs[4] = 11300, 11550  # breakeven(=(12000+11000)/2=11500) 터치 -> 절반 매도
     highs[5] = 13200  # R0 터치 -> 잔여 매도
     df = make_df(closes, highs=highs, lows=lows)
-    trades = backtest_ticker(df, "TEST", SRConfig())
+    trades = backtest_ticker(df, "TEST", S1Config())
     assert len(trades) == 1
     trade = trades[0]
     reasons = [f.reason for f in trade.fills]

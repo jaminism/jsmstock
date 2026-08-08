@@ -1,10 +1,10 @@
-"""SR(상한가리바운딩) 전략 — 신호 탐지 및 개별 종목 트레이드 시뮬레이션.
+"""S1(상한가리바운딩) 전략 — 신호 탐지 및 개별 종목 트레이드 시뮬레이션.
 
-규칙 출처: research/step_1_SR기법.md §2, §3.
+규칙 출처: research/step_1_S1기법.md §2, §3.
 이번 구현이 원문 규칙에 추가/보완한 부분(원문 공백 또는 일봉 단위 시뮬레이션을 위한 필수 가정):
 
   1. 정성적 배제 필터(무공방/긴N자/동테마 후발주/단기과열/유증무증권리락 등)는 기본적으로 꺼져
-     있다 (`SRConfig.qualitative_filter_enabled=False`) — risk-manager 검토(§7.3)가 권고한 대로
+     있다 (`S1Config.qualitative_filter_enabled=False`) — risk-manager 검토(§7.3)가 권고한 대로
      "신호 생성 자동화 + 최종 승인 수동"을 전제로, 순수 정량 규칙만의 기저 성과(baseline)를 먼저
      측정할 수 있게 하기 위함이다. 2026-08-08 step_0_common 추가조사로 무공방/긴N자/120일신고가
      override/선반등에 대한 근사 정의를 확보해 `strategies/qualitative.py`에 구현했으며, 활성화
@@ -27,14 +27,14 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from rich_stock.config import SRConfig
+from rich_stock.config import S1Config
 from rich_stock.limits import is_limit_up_day
 from rich_stock.strategies.base import Fill, Trade
 from rich_stock.strategies.qualitative import QualScore, compute_qualitative_score
 
 
 @dataclass
-class SRSignal:
+class S1Signal:
     ul_index: int
     ul_date: pd.Timestamp
     r0: float
@@ -44,13 +44,13 @@ class SRSignal:
     qual: QualScore | None = None
 
 
-def detect_sr_signals(df: pd.DataFrame, config: SRConfig) -> list[SRSignal]:
-    """일봉 데이터프레임에서 SR 진입 대상이 되는 신규 상한가 이벤트를 찾는다.
+def detect_s1_signals(df: pd.DataFrame, config: S1Config) -> list[S1Signal]:
+    """일봉 데이터프레임에서 S1 진입 대상이 되는 신규 상한가 이벤트를 찾는다.
 
     Args:
         df: index=Date, columns 최소 [Open, High, Low, Close, PrevClose, TradingValue] 포함
     """
-    signals: list[SRSignal] = []
+    signals: list[S1Signal] = []
     is_ul = [
         is_limit_up_day(h, c, pc, config.limit_up_return_threshold)
         for h, c, pc in zip(df["High"], df["Close"], df["PrevClose"])
@@ -74,7 +74,7 @@ def detect_sr_signals(df: pd.DataFrame, config: SRConfig) -> list[SRSignal]:
         b = df["PrevClose"].iloc[i]  # R3 기준 = 상한가 발생 전일 종가
         ab = (a - b) / config.grid_divisions
         signals.append(
-            SRSignal(
+            S1Signal(
                 ul_index=i,
                 ul_date=df.index[i],
                 r0=a,
@@ -87,8 +87,8 @@ def detect_sr_signals(df: pd.DataFrame, config: SRConfig) -> list[SRSignal]:
     return signals
 
 
-def simulate_sr_trade(df: pd.DataFrame, signal: SRSignal, config: SRConfig, ticker: str) -> Trade | None:
-    """단일 SR 신호에 대해 진입 이후 흐름을 일봉 기준으로 시뮬레이션한다.
+def simulate_s1_trade(df: pd.DataFrame, signal: S1Signal, config: S1Config, ticker: str) -> Trade | None:
+    """단일 S1 신호에 대해 진입 이후 흐름을 일봉 기준으로 시뮬레이션한다.
 
     Returns:
         진입이 한 번도 발생하지 않으면 None, 그렇지 않으면 Trade(체결 내역 포함).
@@ -157,15 +157,15 @@ def simulate_sr_trade(df: pd.DataFrame, signal: SRSignal, config: SRConfig, tick
     return trade
 
 
-def backtest_ticker(df: pd.DataFrame, ticker: str, config: SRConfig | None = None) -> list[Trade]:
-    """단일 종목 전체 기간에 대해 SR 트레이드 목록을 생성한다."""
-    config = config or SRConfig()
+def backtest_ticker(df: pd.DataFrame, ticker: str, config: S1Config | None = None) -> list[Trade]:
+    """단일 종목 전체 기간에 대해 S1 트레이드 목록을 생성한다."""
+    config = config or S1Config()
     if df.empty or len(df) < 5:
         return []
-    signals = detect_sr_signals(df, config)
+    signals = detect_s1_signals(df, config)
     trades = []
     for sig in signals:
-        trade = simulate_sr_trade(df, sig, config, ticker)
+        trade = simulate_s1_trade(df, sig, config, ticker)
         if trade is not None:
             trades.append(trade)
     return trades

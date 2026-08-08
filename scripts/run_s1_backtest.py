@@ -1,10 +1,10 @@
-"""SR(상한가리바운딩) 전략 백테스트 실행 CLI.
+"""S1(상한가리바운딩) 전략 백테스트 실행 CLI.
 
 사전에 scripts/fetch_data.py 로 데이터를 캐시해두면 재실행이 빠르다 (미캐시 종목은
 자동으로 다운로드한다).
 
 사용 예:
-    python scripts/run_sr_backtest.py --start 2022-01-01 --end 2024-12-31 --min-market-cap 300000000000 --limit 200
+    python scripts/run_s1_backtest.py --start 2022-01-01 --end 2024-12-31 --min-market-cap 300000000000 --limit 200
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 from rich_stock import db
-from rich_stock.backtest.engine import run_sr_backtest
-from rich_stock.config import SRConfig
+from rich_stock.backtest.engine import run_s1_backtest
+from rich_stock.config import S1Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
-from rich_stock.strategies.sr import detect_sr_signals
+from rich_stock.strategies.s1 import detect_s1_signals
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SR 전략 백테스트")
+    parser = argparse.ArgumentParser(description="S1 전략 백테스트")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--min-market-cap", type=float, default=300_000_000_000)
@@ -41,7 +41,7 @@ def main() -> None:
         help="정성적 배제 필터 근사치(무공방/긴N자/120일신고가 override/선반등 점수제)를 적용한다. "
         "기본값은 미적용(순수 정량 규칙만)이며, research/step_0_공통자료.md §3~5,7 기반 근사치다.",
     )
-    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%). 기본값 0(끔).")
+    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%%). 기본값 0(끔).")
     parser.add_argument("--equity-csv", default=None, help="자산곡선을 CSV로 저장할 경로(선택)")
     parser.add_argument("--trades-csv", default=None, help="개별 트레이드 내역을 CSV로 저장할 경로(선택)")
     parser.add_argument(
@@ -55,11 +55,11 @@ def main() -> None:
     if args.limit:
         tickers = tickers[: args.limit]
 
-    print(f"[run_sr_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
+    print(f"[run_s1_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
-    print(f"[run_sr_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
+    print(f"[run_s1_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
 
-    config = SRConfig(
+    config = S1Config(
         min_trading_value_krw=args.min_trading_value,
         position_size_pct=args.position_size_pct,
         addon_size_pct=args.position_size_pct,
@@ -70,12 +70,12 @@ def main() -> None:
         slippage_pct=args.slippage_pct,
     )
 
-    result = run_sr_backtest(ohlcv, config)
+    result = run_s1_backtest(ohlcv, config)
     m = result.metrics
 
     s = m.signal_level
     filter_label = "적용" if args.qualitative_filter else "미적용(순수 정량 규칙)"
-    print("\n=== SR 백테스트 결과 ===")
+    print("\n=== S1 백테스트 결과 ===")
     print(f"정성적 필터: {filter_label}")
     print(f"기간: {args.start} ~ {args.end}  |  유니버스: {len(ohlcv)}종목  |  초기자본: {args.initial_capital:,.0f}원")
     print(f"총 신호(진입까지 발생한 트레이드): {len(result.trades)}건")
@@ -112,8 +112,8 @@ def main() -> None:
 
     if args.db:
         run_id = db.save_backtest_results(
-            args.db, "SR", args.start, args.end, config, ohlcv, result.trades,
-            detect_sr_signals, trades_csv_path=args.trades_csv,
+            args.db, "S1", args.start, args.end, config, ohlcv, result.trades,
+            detect_s1_signals, trades_csv_path=args.trades_csv,
         )
         print(f"DB 저장 완료: run_id={run_id}  db={args.db}")
 

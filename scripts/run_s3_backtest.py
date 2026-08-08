@@ -1,12 +1,11 @@
-"""K1 전략 백테스트 실행 CLI.
+"""S3 전략 백테스트 실행 CLI.
 
 사전에 scripts/fetch_data.py 로 데이터를 캐시해두면 재실행이 빠르다 (미캐시 종목은
-자동으로 다운로드한다). K1은 원 자료에 명시적 가격 손절가가 없어 K2와 동일하게 인접 기법에서
-차용한 신규 설계(stop_loss_pct=-7%, 전고점 익절, 4일차 강제청산)를 쓴다 — K1Config 참고.
-K2와의 핵심 차이는 진입 방식("종가베팅", D+1~D+2 한정)이다.
+자동으로 다운로드한다). S3는 원 자료에 익절/손절 규칙이 없어 인접 기법(S2/S45)에서 차용한
+신규 설계(stop_loss_pct=-7%, 전고점 익절, 4일차 강제청산)를 쓴다 — S3Config 참고.
 
 사용 예:
-    python scripts/run_k1_backtest.py --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
+    python scripts/run_s3_backtest.py --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
 """
 
 from __future__ import annotations
@@ -19,15 +18,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 from rich_stock import db
-from rich_stock.backtest.engine import run_k1_backtest
-from rich_stock.config import K1Config
+from rich_stock.backtest.engine import run_s3_backtest
+from rich_stock.config import S3Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
-from rich_stock.strategies.k1 import detect_k1_signals
+from rich_stock.strategies.s3 import detect_s3_signals
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="K1 전략 백테스트")
+    parser = argparse.ArgumentParser(description="S3 전략 백테스트")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--min-market-cap", type=float, default=300_000_000_000)
@@ -38,7 +37,7 @@ def main() -> None:
     parser.add_argument("--max-concurrent", type=int, default=10)
     parser.add_argument("--min-trading-value", type=float, default=50_000_000_000)
     parser.add_argument("--stop-loss-pct", type=float, default=-0.07)
-    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%). 기본값 0(끔).")
+    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%%). 기본값 0(끔).")
     parser.add_argument("--equity-csv", default=None, help="자산곡선을 CSV로 저장할 경로(선택)")
     parser.add_argument("--trades-csv", default=None, help="개별 트레이드 내역을 CSV로 저장할 경로(선택)")
     parser.add_argument(
@@ -52,11 +51,11 @@ def main() -> None:
     if args.limit:
         tickers = tickers[: args.limit]
 
-    print(f"[run_k1_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
+    print(f"[run_s3_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
-    print(f"[run_k1_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
+    print(f"[run_s3_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
 
-    config = K1Config(
+    config = S3Config(
         min_trading_value_krw=args.min_trading_value,
         position_size_pct=args.position_size_pct,
         addon_size_pct=args.position_size_pct,
@@ -67,11 +66,11 @@ def main() -> None:
         slippage_pct=args.slippage_pct,
     )
 
-    result = run_k1_backtest(ohlcv, config)
+    result = run_s3_backtest(ohlcv, config)
     m = result.metrics
     s = m.signal_level
 
-    print("\n=== K1 백테스트 결과 ===")
+    print("\n=== S3 백테스트 결과 ===")
     print(f"기간: {args.start} ~ {args.end}  |  유니버스: {len(ohlcv)}종목  |  초기자본: {args.initial_capital:,.0f}원")
     print(f"총 신호(진입까지 발생한 트레이드): {len(result.trades)}건")
     print(f"자본/슬롯 제약으로 스킵: {m.n_skipped_capital_limit}건")
@@ -107,15 +106,15 @@ def main() -> None:
 
     if args.db:
         run_id = db.save_backtest_results(
-            args.db, "K1", args.start, args.end, config, ohlcv, result.trades,
-            detect_k1_signals, trades_csv_path=args.trades_csv,
+            args.db, "S3", args.start, args.end, config, ohlcv, result.trades,
+            detect_s3_signals, trades_csv_path=args.trades_csv,
         )
         print(f"DB 저장 완료: run_id={run_id}  db={args.db}")
 
     print(
-        "\n⚠️ 본 결과는 K1 원 자료에 없는 명시적 손절가(인접 기법에서 차용한 신규 설계)를 포함하며, "
-        "정성적 배제 필터(1등주 판정 등)와 캔들 패턴 분류(국민1음봉 등)도 단순화되어 있습니다. "
-        "근사 거래대금·생존편향 유니버스 등 알려진 한계도 있습니다. "
+        "\n⚠️ 본 결과는 S3 원 자료에 없는 익절/손절 규칙(인접 기법에서 차용한 신규 설계)을 포함하며, "
+        "정성적 배제 필터(무공방/긴N자/동테마 후발주 등)와 되돌림 저점(DLL) 롤링 갱신 로직도 "
+        "단순화되어 있습니다. 근사 거래대금·생존편향 유니버스 등 알려진 한계도 있습니다. "
         "실거래 판단의 근거로 단독 사용하지 마십시오."
     )
 

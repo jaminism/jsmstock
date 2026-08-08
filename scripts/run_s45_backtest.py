@@ -1,14 +1,14 @@
-"""K+ 전략(K1플러스/K2플러스) 백테스트 실행 CLI.
+"""S45 전략(S4/S5) 백테스트 실행 CLI.
 
 사전에 scripts/fetch_data.py 로 데이터를 캐시해두면 재실행이 빠르다 (미캐시 종목은
-자동으로 다운로드한다). K+는 "세력봉"(power candle) 이벤트를 트리거로 쓴다는 점이 원조
-SR/K1/K2(상한가 트리거)와 다르다 — 세력봉 판정식의 실제 파라미터(세력봉대금 등)가 원문에
-없어 500억원 거래대금 기준으로 근사했다. K1플러스(종가베팅, 0.236)와 K2플러스(장중매매, 0.5)
-중 하나를 --variant 로 선택한다. 자세한 근사·단순화 내역은 KPlusConfig 참고.
+자동으로 다운로드한다). S45는 "세력봉"(power candle) 이벤트를 트리거로 쓴다는 점이 원조
+S1/S2/S3(상한가 트리거)와 다르다 — 세력봉 판정식의 실제 파라미터(세력봉대금 등)가 원문에
+없어 500억원 거래대금 기준으로 근사했다. S4(종가베팅, 0.236)와 S5(장중매매, 0.5)
+중 하나를 --variant 로 선택한다. 자세한 근사·단순화 내역은 S45BaseConfig 참고.
 
 사용 예:
-    python scripts/run_kplus_backtest.py --variant k1 --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
-    python scripts/run_kplus_backtest.py --variant k2 --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
+    python scripts/run_kplus_backtest.py --variant s4 --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
+    python scripts/run_kplus_backtest.py --variant s5 --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 from rich_stock import db
-from rich_stock.backtest.engine import run_k1_plus_backtest, run_k2_plus_backtest
-from rich_stock.config import K1PlusConfig, K2PlusConfig
+from rich_stock.backtest.engine import run_s4_backtest, run_s5_backtest
+from rich_stock.config import S4Config, S5Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
-from rich_stock.strategies.kplus import detect_power_candle_signals
+from rich_stock.strategies.s45 import detect_s45_signals
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="K+ 전략(K1플러스/K2플러스) 백테스트")
-    parser.add_argument("--variant", choices=["k1", "k2"], required=True, help="k1=K1플러스(종가베팅), k2=K2플러스(장중매매)")
+    parser = argparse.ArgumentParser(description="S45 전략(S4/S5) 백테스트")
+    parser.add_argument("--variant", choices=["s4", "s5"], required=True, help="s4=S4(종가베팅), s5=S5(장중매매)")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--min-market-cap", type=float, default=300_000_000_000)
@@ -41,7 +41,7 @@ def main() -> None:
     parser.add_argument("--max-concurrent", type=int, default=10)
     parser.add_argument("--min-trading-value", type=float, default=50_000_000_000)
     parser.add_argument("--stop-loss-pct", type=float, default=-0.07)
-    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%). 기본값 0(끔).")
+    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%%). 기본값 0(끔).")
     parser.add_argument("--equity-csv", default=None, help="자산곡선을 CSV로 저장할 경로(선택)")
     parser.add_argument("--trades-csv", default=None, help="개별 트레이드 내역을 CSV로 저장할 경로(선택)")
     parser.add_argument(
@@ -55,8 +55,8 @@ def main() -> None:
     if args.limit:
         tickers = tickers[: args.limit]
 
-    label = "K1플러스" if args.variant == "k1" else "K2플러스"
-    technique = "K1+" if args.variant == "k1" else "K2+"
+    label = "S4" if args.variant == "s4" else "S5"
+    technique = "S4" if args.variant == "s4" else "S5"
     print(f"[run_kplus_backtest:{args.variant}] 유니버스 {len(tickers)}종목 로딩 중...")
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
     print(f"[run_kplus_backtest:{args.variant}] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
@@ -72,12 +72,12 @@ def main() -> None:
         slippage_pct=args.slippage_pct,
     )
 
-    if args.variant == "k1":
-        config = K1PlusConfig(**common_kwargs)
-        result = run_k1_plus_backtest(ohlcv, config)
+    if args.variant == "s4":
+        config = S4Config(**common_kwargs)
+        result = run_s4_backtest(ohlcv, config)
     else:
-        config = K2PlusConfig(**common_kwargs)
-        result = run_k2_plus_backtest(ohlcv, config)
+        config = S5Config(**common_kwargs)
+        result = run_s5_backtest(ohlcv, config)
 
     m = result.metrics
     s = m.signal_level
@@ -119,7 +119,7 @@ def main() -> None:
     if args.db:
         run_id = db.save_backtest_results(
             args.db, technique, args.start, args.end, config, ohlcv, result.trades,
-            detect_power_candle_signals, trades_csv_path=args.trades_csv,
+            detect_s45_signals, trades_csv_path=args.trades_csv,
         )
         print(f"DB 저장 완료: run_id={run_id}  db={args.db}")
 

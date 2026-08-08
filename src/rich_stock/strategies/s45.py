@@ -1,7 +1,7 @@
-"""K+ 전략(K1플러스/K2플러스) — "세력봉" 이벤트 기반 피보나치 되돌림 매매.
+"""S45 전략(S4/S5) — "세력봉" 이벤트 기반 피보나치 되돌림 매매.
 
-규칙 출처: research/step_5_K+기법.md §2, §3.
-SR/K1/K2([[project-sr-backtest-engine]], [[project-k1-backtest-engine]], [[project-k2-backtest-engine]])
+규칙 출처: research/step_5_S45기법.md §2, §3.
+S1/S2/S3([[project-sr-backtest-engine]], [[project-s2-backtest-engine]], [[project-s3-backtest-engine]])
 와의 핵심 차이:
 
   1. **진입 트리거가 상한가가 아니라 "세력봉"이다.** 원문 수식(§3)을 근사 구현했다:
@@ -10,18 +10,18 @@ SR/K1/K2([[project-sr-backtest-engine]], [[project-k1-backtest-engine]], [[proje
      조건(전일종가 대비 고가 15%+, 당일 변동폭 15%+, 시가 대비 종가 9%+)까지 요구한다.
      원문의 `세력봉대금`/`상한가대금` 실제 수치는 확인 불가해(§8-1) 둘 다 `min_trading_value_krw`
      (500억, §2 프로즈 기준)로 통일했다.
-  2. **RH/RL 고정 방식이 SR/K1/K2와 다르다 — RL 계산 구간에서 이벤트 당일을 제외한다.** K+는
-     세력봉 당일(K1+) 또는 그 이후 며칠(K2+) 자체가 진입 유효 구간이라, 원조 K1/K2처럼 "이벤트
+  2. **RH/RL 고정 방식이 S1/S2/S3와 다르다 — RL 계산 구간에서 이벤트 당일을 제외한다.** S45는
+     세력봉 당일(S2+) 또는 그 이후 며칠(S3+) 자체가 진입 유효 구간이라, 원조 S2/S3처럼 "이벤트
      다음날부터 진입"으로 자연히 분리할 수 없다. 그래서 이벤트 당일의 저가가 RL 계산에 섞이면
-     그날 저가가 정의상 항상 되돌림선을 만족해버리는 자기순환적 결함([[project-k2-backtest-engine]]
-     에서 처음 발견)이 재발할 수 있어, `detect_power_candle_signals`가 RL을 이벤트 당일을 제외한
-     lookback 구간에서만 계산한다. RH(세력봉 당일 고가)는 SR/K1/K2와 동일하게 이벤트 당일 값을
+     그날 저가가 정의상 항상 되돌림선을 만족해버리는 자기순환적 결함([[project-s3-backtest-engine]]
+     에서 처음 발견)이 재발할 수 있어, `detect_s45_signals`가 RL을 이벤트 당일을 제외한
+     lookback 구간에서만 계산한다. RH(세력봉 당일 고가)는 S1/S2/S3와 동일하게 이벤트 당일 값을
      그대로 고정한다.
-  3. **K1+와 K2+는 같은 세력봉 신호를 공유하되 진입 방식이 다르다** — K1+(종가베팅)는 세력봉
-     당일 종가가 K1+선(0.236)을 하회하면 그날 종가에 매수(당일 1회 한정), K2+(장중매매)는
-     세력봉 발생일 포함 며칠 이내 장중 저가가 K2+선(0.5)을 터치하면 그 레벨 가격에 매수 —
-     원조 K1/K2(step_2/3)의 "종가베팅 vs 장중터치" 구도를 그대로 물려받았다.
-  4. 익절/손절은 SR/K1/K2와 동일한 방식(구간 상단 단일가 익절, -7% 손절, 4일차 강제청산)으로
+  3. **S2+와 S3+는 같은 세력봉 신호를 공유하되 진입 방식이 다르다** — S2+(종가베팅)는 세력봉
+     당일 종가가 S2+선(0.236)을 하회하면 그날 종가에 매수(당일 1회 한정), S3+(장중매매)는
+     세력봉 발생일 포함 며칠 이내 장중 저가가 S3+선(0.5)을 터치하면 그 레벨 가격에 매수 —
+     원조 S2/S3(step_2/3)의 "종가베팅 vs 장중터치" 구도를 그대로 물려받았다.
+  4. 익절/손절은 S1/S2/S3와 동일한 방식(구간 상단 단일가 익절, -7% 손절, 4일차 강제청산)으로
      단순화했고, 추매(대장주 한정)는 판별 불가로 미구현이다.
 """
 
@@ -31,13 +31,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from rich_stock.config import K1PlusConfig, K2PlusConfig, KPlusConfig
+from rich_stock.config import S4Config, S5Config, S45BaseConfig
 from rich_stock.limits import is_limit_up_day
 from rich_stock.strategies.base import Fill, Trade
 
 
 @dataclass
-class PowerCandleSignal:
+class RallySignal:
     event_index: int
     event_date: pd.Timestamp
     high: float  # RH — 되돌림 고점 (세력봉 당일 고가, 고정)
@@ -52,7 +52,7 @@ def _is_power_candle_row(
     prev_close: float,
     trading_value: float,
     is_ul: bool,
-    config: KPlusConfig,
+    config: S45BaseConfig,
 ) -> bool:
     if trading_value < config.min_trading_value_krw:
         return False
@@ -65,9 +65,9 @@ def _is_power_candle_row(
     )
 
 
-def detect_power_candle_signals(df: pd.DataFrame, config: KPlusConfig) -> list[PowerCandleSignal]:
+def detect_s45_signals(df: pd.DataFrame, config: S45BaseConfig) -> list[RallySignal]:
     """세력봉 이벤트를 찾아 고정된 RH/RL을 계산한다 (RL은 이벤트 당일을 제외한 lookback 최저가)."""
-    signals: list[PowerCandleSignal] = []
+    signals: list[RallySignal] = []
     is_ul = [
         is_limit_up_day(h, c, pc, config.limit_up_return_threshold)
         for h, c, pc in zip(df["High"], df["Close"], df["PrevClose"])
@@ -84,7 +84,7 @@ def detect_power_candle_signals(df: pd.DataFrame, config: KPlusConfig) -> list[P
         if not is_power[i]:
             continue
         if i > 0 and is_power[i - 1]:
-            continue  # 연속 세력봉은 첫날만 이벤트로 카운트 (SR/K1/K2와 동일한 단순화)
+            continue  # 연속 세력봉은 첫날만 이벤트로 카운트 (S1/S2/S3와 동일한 단순화)
 
         lookback_start = max(0, i - config.pre_event_lookback_days)
         if lookback_start == i:
@@ -93,14 +93,14 @@ def detect_power_candle_signals(df: pd.DataFrame, config: KPlusConfig) -> list[P
         rh = float(df["High"].iloc[i])
         rl = float(df["Low"].iloc[lookback_start:i].min())  # 이벤트 당일(i) 제외
 
-        signals.append(PowerCandleSignal(event_index=i, event_date=df.index[i], high=rh, low=rl))
+        signals.append(RallySignal(event_index=i, event_date=df.index[i], high=rh, low=rl))
     return signals
 
 
-def simulate_k1_plus_trade(
-    df: pd.DataFrame, signal: PowerCandleSignal, config: K1PlusConfig, ticker: str
+def simulate_s4_trade(
+    df: pd.DataFrame, signal: RallySignal, config: S4Config, ticker: str
 ) -> Trade | None:
-    """K1플러스(종가베팅) — 세력봉 당일 종가가 K1+선을 하회하면 그날 종가에 매수(당일 1회 한정)."""
+    """S4(종가베팅) — 세력봉 당일 종가가 S2+선을 하회하면 그날 종가에 매수(당일 1회 한정)."""
     n = len(df)
     level = signal.high - (signal.high - signal.low) * config.fib_ratio
     row = df.iloc[signal.event_index]
@@ -111,7 +111,7 @@ def simulate_k1_plus_trade(
     entry_idx = signal.event_index
     entry_price = float(row["Close"])
     trade = Trade(ticker=ticker, signal_date=signal.event_date)
-    trade.fills.append(Fill(df.index[entry_idx], entry_price, 1.0, "entry_k1_plus"))
+    trade.fills.append(Fill(df.index[entry_idx], entry_price, 1.0, "entry_s4"))
 
     shares = 1.0
     force_idx = min(entry_idx + config.hold_days - 1, n - 1)
@@ -139,10 +139,10 @@ def simulate_k1_plus_trade(
     return trade
 
 
-def simulate_k2_plus_trade(
-    df: pd.DataFrame, signal: PowerCandleSignal, config: K2PlusConfig, ticker: str
+def simulate_s5_trade(
+    df: pd.DataFrame, signal: RallySignal, config: S5Config, ticker: str
 ) -> Trade | None:
-    """K2플러스(장중매매) — 세력봉 발생일 포함 entry_valid_days일 이내 장중 저가가 K2+선을
+    """S5(장중매매) — 세력봉 발생일 포함 entry_valid_days일 이내 장중 저가가 S3+선을
     터치하면 그 레벨 가격에 매수."""
     n = len(df)
     level = signal.high - (signal.high - signal.low) * config.fib_ratio
@@ -155,7 +155,7 @@ def simulate_k2_plus_trade(
         row = df.iloc[i]
         if row["Low"] <= level:
             entry_idx = i
-            trade.fills.append(Fill(df.index[i], level, 1.0, "entry_k2_plus"))
+            trade.fills.append(Fill(df.index[i], level, 1.0, "entry_s5"))
             break
 
     if entry_idx is None:
@@ -187,29 +187,29 @@ def simulate_k2_plus_trade(
     return trade
 
 
-def backtest_ticker_k1_plus(df: pd.DataFrame, ticker: str, config: K1PlusConfig | None = None) -> list[Trade]:
-    """단일 종목 전체 기간에 대해 K1플러스 트레이드 목록을 생성한다."""
-    config = config or K1PlusConfig()
+def backtest_ticker_s4(df: pd.DataFrame, ticker: str, config: S4Config | None = None) -> list[Trade]:
+    """단일 종목 전체 기간에 대해 S4 트레이드 목록을 생성한다."""
+    config = config or S4Config()
     if df.empty or len(df) < 5:
         return []
-    signals = detect_power_candle_signals(df, config)
+    signals = detect_s45_signals(df, config)
     trades = []
     for sig in signals:
-        trade = simulate_k1_plus_trade(df, sig, config, ticker)
+        trade = simulate_s4_trade(df, sig, config, ticker)
         if trade is not None:
             trades.append(trade)
     return trades
 
 
-def backtest_ticker_k2_plus(df: pd.DataFrame, ticker: str, config: K2PlusConfig | None = None) -> list[Trade]:
-    """단일 종목 전체 기간에 대해 K2플러스 트레이드 목록을 생성한다."""
-    config = config or K2PlusConfig()
+def backtest_ticker_s5(df: pd.DataFrame, ticker: str, config: S5Config | None = None) -> list[Trade]:
+    """단일 종목 전체 기간에 대해 S5 트레이드 목록을 생성한다."""
+    config = config or S5Config()
     if df.empty or len(df) < 5:
         return []
-    signals = detect_power_candle_signals(df, config)
+    signals = detect_s45_signals(df, config)
     trades = []
     for sig in signals:
-        trade = simulate_k2_plus_trade(df, sig, config, ticker)
+        trade = simulate_s5_trade(df, sig, config, ticker)
         if trade is not None:
             trades.append(trade)
     return trades

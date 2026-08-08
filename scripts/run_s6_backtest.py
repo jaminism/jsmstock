@@ -1,13 +1,13 @@
 """SP2(이동평균선 눌림목) 전략 백테스트 실행 CLI.
 
 사전에 scripts/fetch_data.py 로 데이터를 캐시해두면 재실행이 빠르다 (미캐시 종목은
-자동으로 다운로드한다). SP2는 다른 4개 기법(SR/K1/K2/K1+/K2+)과 달리 원문 자체가 "가격 손절
+자동으로 다운로드한다). SP2는 다른 4개 기법(S1/S2/S3/S2+/S3+)과 달리 원문 자체가 "가격 손절
 없음"을 설계 의도로 명시하고 있어, 이번 구현도 인접 기법에서 손절가를 차용하지 않고 원문 그대로
-가격 기반 손절 없이 백테스트한다 — SPConfig 참고. 2차(20일선) 매수 없이 1차(15일선)만 보유 중이면
+가격 기반 손절 없이 백테스트한다 — S6Config 참고. 2차(20일선) 매수 없이 1차(15일선)만 보유 중이면
 시간청산도 적용되지 않아 무기한 보유 경로가 열려 있다는 점도 원문 설계를 그대로 반영한 것이다.
 
 사용 예:
-    python scripts/run_sp_backtest.py --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
+    python scripts/run_s6_backtest.py --start 2021-01-01 --end 2024-12-31 --min-market-cap 0 --cache-dir .cache/ohlcv
 """
 
 from __future__ import annotations
@@ -20,11 +20,11 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 from rich_stock import db
-from rich_stock.backtest.engine import run_sp_backtest
-from rich_stock.config import SPConfig
+from rich_stock.backtest.engine import run_s6_backtest
+from rich_stock.config import S6Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
-from rich_stock.strategies.sp import detect_sp_signals
+from rich_stock.strategies.s6 import detect_s6_signals
 
 
 def main() -> None:
@@ -38,7 +38,7 @@ def main() -> None:
     parser.add_argument("--position-size-pct", type=float, default=0.03)
     parser.add_argument("--max-concurrent", type=int, default=10)
     parser.add_argument("--min-trading-value", type=float, default=50_000_000_000)
-    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%). 기본값 0(끔).")
+    parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%%). 기본값 0(끔).")
     parser.add_argument("--equity-csv", default=None, help="자산곡선을 CSV로 저장할 경로(선택)")
     parser.add_argument("--trades-csv", default=None, help="개별 트레이드 내역을 CSV로 저장할 경로(선택)")
     parser.add_argument(
@@ -52,21 +52,21 @@ def main() -> None:
     if args.limit:
         tickers = tickers[: args.limit]
 
-    print(f"[run_sp_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
+    print(f"[run_s6_backtest] 유니버스 {len(tickers)}종목 로딩 중...")
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
-    print(f"[run_sp_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
+    print(f"[run_s6_backtest] {len(ohlcv)}종목 데이터 확보 완료. 백테스트 시작...")
 
-    config = SPConfig(
+    config = S6Config(
         min_trading_value_krw=args.min_trading_value,
         position_size_pct=args.position_size_pct,
         addon_size_pct=args.position_size_pct,
-        max_position_pct=args.position_size_pct * 3,  # SP는 최대 3회 매수(1차+2차+3차)
+        max_position_pct=args.position_size_pct * 3,  # S6는 최대 3회 매수(1차+2차+3차)
         max_concurrent_positions=args.max_concurrent,
         initial_capital_krw=args.initial_capital,
         slippage_pct=args.slippage_pct,
     )
 
-    result = run_sp_backtest(ohlcv, config)
+    result = run_s6_backtest(ohlcv, config)
     m = result.metrics
     s = m.signal_level
 
@@ -106,8 +106,8 @@ def main() -> None:
 
     if args.db:
         run_id = db.save_backtest_results(
-            args.db, "SP", args.start, args.end, config, ohlcv, result.trades,
-            detect_sp_signals, trades_csv_path=args.trades_csv,
+            args.db, "S6", args.start, args.end, config, ohlcv, result.trades,
+            detect_s6_signals, trades_csv_path=args.trades_csv,
         )
         print(f"DB 저장 완료: run_id={run_id}  db={args.db}")
 

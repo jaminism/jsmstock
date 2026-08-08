@@ -1,4 +1,4 @@
-"""SR 정성적 배제 필터의 정량적 근사치.
+"""S1 정성적 배제 필터의 정량적 근사치.
 
 출처: research/step_0_공통자료.md §3~5,7 (2026-08-08 step_0_common/step_1 추가조사).
 바른손 사례(원문)의 감점제(긴N자 -20, 선반등 -10/건, 후발주 -30, 총점 0점이 매수 적정)를
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from rich_stock.config import SRConfig
+from rich_stock.config import S1Config
 
 
 @dataclass
@@ -38,7 +38,7 @@ def compute_qualitative_score(
     df: pd.DataFrame,
     ul_index: int,
     prior_ul_index: int | None,
-    config: SRConfig,
+    config: S1Config,
 ) -> QualScore:
     """상한가 이벤트 하나에 대한 정성적 점수를 계산한다.
 
@@ -87,7 +87,7 @@ def _is_new_high(df: pd.DataFrame, ul_index: int, lookback_days: int) -> bool:
     return bool(df["High"].iloc[ul_index] >= prior_max_high)
 
 
-def _is_long_n_shape(df: pd.DataFrame, ul_index: int, config: SRConfig) -> bool:
+def _is_long_n_shape(df: pd.DataFrame, ul_index: int, config: S1Config) -> bool:
     n = config.long_n_lookback_days
     start = ul_index - n
     if start < 0:
@@ -105,7 +105,7 @@ def _is_long_n_shape(df: pd.DataFrame, ul_index: int, config: SRConfig) -> bool:
     return bool(max_single_day < total_return * config.long_n_max_single_day_share)
 
 
-def _is_no_resistance(df: pd.DataFrame, ul_index: int, config: SRConfig) -> bool:
+def _is_no_resistance(df: pd.DataFrame, ul_index: int, config: S1Config) -> bool:
     lookback = config.no_resistance_lookback_days
     start = max(0, ul_index - lookback)
     if start >= ul_index:

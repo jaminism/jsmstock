@@ -18,20 +18,20 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from rich_stock.backtest.engine import run_sr_backtest
-from rich_stock.config import SRConfig
+from rich_stock.backtest.engine import run_s1_backtest
+from rich_stock.config import S1Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
 
 
-def _print_sweep(title: str, ohlcv, base: SRConfig, field: str, values: list) -> None:
+def _print_sweep(title: str, ohlcv, base: S1Config, field: str, values: list) -> None:
     header = f"{field}={'값':<8} {'신호수':>7} {'신호승률':>8} {'PF(신호)':>9} {'실행건':>6} {'승률':>7} {'CAGR':>8} {'MDD':>8}"
     print(f"\n### {title} ###")
     print(header)
     print("-" * len(header))
     for v in values:
         config = dataclasses.replace(base, **{field: v})
-        result = run_sr_backtest(ohlcv, config)
+        result = run_s1_backtest(ohlcv, config)
         m = result.metrics
         s = m.signal_level
         print(
@@ -58,7 +58,7 @@ def main() -> None:
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
     print(f"[sensitivity] {len(ohlcv)}종목 확보. 임계값 스윕 시작...")
 
-    base = SRConfig(qualitative_filter_enabled=True)
+    base = S1Config(qualitative_filter_enabled=True)
 
     _print_sweep(
         "무공방 판정 비율(no_resistance_price_ratio) — 낮을수록 엄격(더 많이 배제)",

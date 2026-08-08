@@ -1,12 +1,12 @@
 """상한가 판정 로직.
 
-원 자료(research/step_1_SR기법.md, step_2_K2기법.md)의 UL()/상한가체크() 수식은 전일종가에
+원 자료(research/step_1_S1기법.md, step_2_S3기법.md)의 UL()/상한가체크() 수식은 전일종가에
 호가단위(tick size)를 적용해 정확한 상한가 가격을 계산한다. 그러나:
   1) 호가단위 표는 2023-01-25 KRX 개편으로 구간이 바뀌었고,
-  2) 원 자료 자신도 보조 검색식(K1_v1)에서는 exact tick 계산 대신
+  2) 원 자료 자신도 보조 검색식(검색식v1)에서는 exact tick 계산 대신
      "등락률 29.5% 이상"이라는 근사 기준을 이미 사용하고 있다.
 
-따라서 이번 구현은 근사 기준을 1차 판정 방식으로 채택한다(설정값: config.SRConfig.limit_up_return_threshold).
+따라서 이번 구현은 근사 기준을 1차 판정 방식으로 채택한다(설정값: config.S1Config.limit_up_return_threshold).
 정확한 tick 기반 계산이 필요해지면 compute_limit_up_price()를 사용하되, 호가단위 구간은
 반드시 대상 시점 기준으로 재검증할 것.
 """
