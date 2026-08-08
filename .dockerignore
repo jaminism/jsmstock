@@ -1,0 +1,16 @@
+.git/
+.venv32/
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+materials/
+report/
+research/
+harness-100-main/
+history.md
+info.md
+mm.png
+kiwoom-rest-api-spec.json
+kiwoom_credentials.json
+slack_credentials.json
