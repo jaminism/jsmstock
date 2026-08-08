@@ -41,3 +41,6 @@ mm.png
 
 # 키움 REST API 전체 명세(2.4MB) — 키움 공식 문서 원본이라 로컬 참고용으로만 보관, 재배포 안 함
 kiwoom-rest-api-spec.json
+
+# 개인 실운용/라이브 스캐닝 도구 — 백테스트 엔진(공개)과 구분, 전부 로컬 전용
+scripts/local/
