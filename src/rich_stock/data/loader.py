@@ -64,12 +64,18 @@ def load_universe_ohlcv(
     cache_dir: str | Path = ".cache/ohlcv",
     sleep_sec: float = 0.05,
     on_progress=None,
+    force_refresh: bool = False,
 ) -> dict[str, pd.DataFrame]:
-    """여러 종목의 일봉 데이터를 순차 수집한다 (Naver 소스 과호출 방지용 sleep 포함)."""
+    """여러 종목의 일봉 데이터를 순차 수집한다 (Naver 소스 과호출 방지용 sleep 포함).
+
+    force_refresh=True면 캐시의 7일 허용오차를 무시하고 전종목을 다시 받는다 — 매일 도는
+    라이브 스캐너처럼 "어제/오늘 데이터가 실제로 반영됐는지"가 중요한 경우에 쓴다. 백테스트처럼
+    과거 구간을 재현할 때는 기본값(False)이 훨씬 빠르다.
+    """
     result: dict[str, pd.DataFrame] = {}
     for i, ticker in enumerate(tickers):
         try:
-            df = load_ohlcv(ticker, start, end, cache_dir=cache_dir)
+            df = load_ohlcv(ticker, start, end, cache_dir=cache_dir, force_refresh=force_refresh)
             if not df.empty:
                 result[ticker] = df
         except Exception as exc:  # noqa: BLE001 - 개별 종목 실패는 건너뛰고 계속 진행
