@@ -17,10 +17,12 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+from rich_stock import db
 from rich_stock.backtest.engine import run_k2_backtest
 from rich_stock.config import K2Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
+from rich_stock.strategies.k2 import detect_k2_signals
 
 
 def main() -> None:
@@ -38,6 +40,10 @@ def main() -> None:
     parser.add_argument("--slippage-pct", type=float, default=0.0, help="편도 슬리피지(예: 0.003=왕복 약 0.6%). 기본값 0(끔).")
     parser.add_argument("--equity-csv", default=None, help="자산곡선을 CSV로 저장할 경로(선택)")
     parser.add_argument("--trades-csv", default=None, help="개별 트레이드 내역을 CSV로 저장할 경로(선택)")
+    parser.add_argument(
+        "--db", default=db.DEFAULT_DB_PATH,
+        help=f"신호·트레이드를 DuckDB에 저장할 경로. 빈 문자열(--db \"\")이면 저장 안 함. 기본값 {db.DEFAULT_DB_PATH}",
+    )
     args = parser.parse_args()
 
     universe = get_universe(min_market_cap=args.min_market_cap)
@@ -95,24 +101,15 @@ def main() -> None:
         print(f"자산곡선 저장: {args.equity_csv}")
 
     if args.trades_csv:
-        import pandas as pd
-
-        rows = []
-        for t in result.trades:
-            rows.append(
-                {
-                    "ticker": t.ticker,
-                    "signal_date": t.signal_date,
-                    "entry_date": t.entry_date,
-                    "exit_date": t.exit_date,
-                    "exit_reason": t.exit_reason,
-                    "return_pct": t.return_pct * 100 if t.entry_date else None,
-                    "pnl_per_unit": t.pnl if t.entry_date else None,
-                    "closed": t.is_closed,
-                }
-            )
-        pd.DataFrame(rows).to_csv(args.trades_csv, index=False, encoding="utf-8-sig")
+        db.trades_to_dataframe(result.trades).to_csv(args.trades_csv, index=False, encoding="utf-8-sig")
         print(f"트레이드 내역 저장: {args.trades_csv}")
+
+    if args.db:
+        run_id = db.save_backtest_results(
+            args.db, "K2", args.start, args.end, config, ohlcv, result.trades,
+            detect_k2_signals, trades_csv_path=args.trades_csv,
+        )
+        print(f"DB 저장 완료: run_id={run_id}  db={args.db}")
 
     print(
         "\n⚠️ 본 결과는 K2 원 자료에 없는 익절/손절 규칙(인접 기법에서 차용한 신규 설계)을 포함하며, "
