@@ -10,11 +10,12 @@ import pandas as pd
 
 from rich_stock.backtest.metrics import Metrics, compute_metrics
 from rich_stock.backtest.portfolio import PortfolioResult, allocate_portfolio
-from rich_stock.config import K1Config, K1PlusConfig, K2Config, K2PlusConfig, PortfolioConfig, SRConfig
+from rich_stock.config import K1Config, K1PlusConfig, K2Config, K2PlusConfig, PortfolioConfig, SPConfig, SRConfig
 from rich_stock.strategies.base import Trade
 from rich_stock.strategies.k1 import backtest_ticker as k1_backtest_ticker
 from rich_stock.strategies.k2 import backtest_ticker as k2_backtest_ticker
 from rich_stock.strategies.kplus import backtest_ticker_k1_plus, backtest_ticker_k2_plus
+from rich_stock.strategies.sp import backtest_ticker as sp_backtest_ticker
 from rich_stock.strategies.sr import backtest_ticker as sr_backtest_ticker
 
 BacktestTickerFn = Callable[[pd.DataFrame, str, PortfolioConfig], list[Trade]]
@@ -89,3 +90,7 @@ def run_k1_plus_backtest(ohlcv: dict[str, pd.DataFrame], config: K1PlusConfig | 
 
 def run_k2_plus_backtest(ohlcv: dict[str, pd.DataFrame], config: K2PlusConfig | None = None) -> BacktestResult:
     return run_backtest(ohlcv, config or K2PlusConfig(), backtest_ticker_k2_plus)
+
+
+def run_sp_backtest(ohlcv: dict[str, pd.DataFrame], config: SPConfig | None = None) -> BacktestResult:
+    return run_backtest(ohlcv, config or SPConfig(), sp_backtest_ticker)

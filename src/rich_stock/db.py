@@ -104,6 +104,14 @@ def _signal_row(technique: str, ticker: str, sig: Any) -> dict:
     if technique in ("K1+", "K2+"):
         # fib_ratio가 변형(K1+/K2+)마다 달라 detect 단계의 신호 객체에는 level이 없다.
         return {"ticker": ticker, "event_date": sig.event_date, "high": float(sig.high), "low": float(sig.low), "level": None, "extra": None}
+    if technique == "SP":
+        # 되돌림 기준선이 고정 그리드가 아니라 매일 갱신되는 이동평균이라 detect 단계에는 level이
+        # 없다(진입가는 매매 시뮬레이션 시점의 15일선 값으로 결정됨).
+        extra = json.dumps({"streak_len": int(sig.streak_len)}, ensure_ascii=False)
+        return {
+            "ticker": ticker, "event_date": sig.peak_date, "high": float(sig.peak_price),
+            "low": float(sig.pre_rally_low), "level": None, "extra": extra,
+        }
     raise ValueError(f"unknown technique: {technique}")
 
 
