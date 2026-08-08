@@ -18,7 +18,7 @@ def conn(tmp_path):
 
 def test_connect_creates_schema(conn):
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert {"runs", "signals", "trades"} <= tables
+    assert {"runs", "signals", "trades", "decisions"} <= tables
 
 
 def test_save_run_persists_params_as_json(conn):
@@ -121,3 +121,73 @@ def test_save_signals_for_universe_calls_detect_per_ticker(conn):
     db.save_signals_for_universe(conn, "run2", "S3", ohlcv, S3Config(), detect_s3_signals)
     count = conn.execute("SELECT count(*) FROM signals WHERE run_id = 'run2'").fetchone()[0]
     assert count == 2  # 두 종목 모두 동일한 신호 1건씩
+
+
+# --- decisions (매수/보류/매도 결과 기록) --------------------------------------
+
+
+def test_record_buy_creates_open_decision(conn):
+    decision_id = db.record_buy(
+        conn, "005930", buy_price=70000, technique="S1", signal_date="2026-08-01",
+        buy_date="2026-08-02", quantity=10, note="테스트 매수",
+    )
+    row = conn.execute(
+        "SELECT ticker, technique, action, status, buy_price, quantity, note FROM decisions WHERE decision_id = ?",
+        [decision_id],
+    ).fetchone()
+    assert row == ("005930", "S1", "buy", "open", 70000, 10, "테스트 매수")
+
+
+def test_record_buy_defaults_buy_date_to_today(conn):
+    decision_id = db.record_buy(conn, "005930", buy_price=70000)
+    row = conn.execute("SELECT buy_date FROM decisions WHERE decision_id = ?", [decision_id]).fetchone()
+    assert row[0] is not None
+
+
+def test_record_skip_creates_skipped_decision(conn):
+    decision_id = db.record_skip(conn, "069540", technique="S1", note="이평선 왜곡 의심")
+    row = conn.execute("SELECT action, status, note FROM decisions WHERE decision_id = ?", [decision_id]).fetchone()
+    assert row == ("skip", "skipped", "이평선 왜곡 의심")
+
+
+def test_close_decision_computes_pnl_and_return_pct(conn):
+    decision_id = db.record_buy(conn, "005930", buy_price=70000, quantity=10)
+    db.close_decision(conn, decision_id, sell_price=77000, sell_date="2026-08-10")
+
+    row = conn.execute(
+        "SELECT status, sell_price, sell_date, pnl, return_pct FROM decisions WHERE decision_id = ?",
+        [decision_id],
+    ).fetchone()
+    status, sell_price, sell_date, pnl, return_pct = row
+    assert status == "closed"
+    assert sell_price == 77000
+    assert str(sell_date) == "2026-08-10"
+    assert pnl == 70000  # (77000-70000)*10
+    assert round(return_pct, 2) == 10.0  # (77000/70000-1)*100
+
+
+def test_close_decision_raises_for_unknown_id(conn):
+    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+        db.close_decision(conn, "dec_nonexistent_00000000", sell_price=1000)
+
+
+def test_close_decision_raises_if_already_closed(conn):
+    decision_id = db.record_buy(conn, "005930", buy_price=70000)
+    db.close_decision(conn, decision_id, sell_price=71000)
+    with pytest.raises(ValueError, match="open만 가능"):
+        db.close_decision(conn, decision_id, sell_price=72000)
+
+
+def test_find_open_decision_returns_most_recent_open(conn):
+    db.record_buy(conn, "005930", buy_price=70000, buy_date="2026-08-01")
+    newer_id = db.record_buy(conn, "005930", buy_price=71000, buy_date="2026-08-05")
+
+    assert db.find_open_decision(conn, "005930") == newer_id
+
+
+def test_find_open_decision_returns_none_when_no_open_position(conn):
+    decision_id = db.record_buy(conn, "005930", buy_price=70000)
+    db.close_decision(conn, decision_id, sell_price=71000)
+
+    assert db.find_open_decision(conn, "005930") is None
+    assert db.find_open_decision(conn, "999999") is None
