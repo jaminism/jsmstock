@@ -1,0 +1,258 @@
+"""매매기법별 백테스트 파라미터.
+
+`PortfolioConfig`는 backtest/portfolio.py, metrics.py, engine.py가 기법(SR/K2/...)에 상관없이
+공용으로 쓰는 자본배분·포지션사이징 필드를 모아둔 공통 기반이다. 기법별 config(SRConfig, K2Config)는
+여기서 상속받아 각자의 고유 파라미터만 추가한다 — 백테스트 인프라를 기법마다 새로 만들지 않기 위함.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PortfolioConfig:
+    """여러 기법이 공유하는 자본배분/포지션사이징 파라미터.
+
+    position_size_pct, max_concurrent_positions 등은 원 자료 어디에도 정의되어 있지 않아
+    (risk-manager 검토에서 반복 지적된 공백) 이번 구현에서 새로 도입한 보수적 기본값이며,
+    백테스트로 민감도를 검증해야 한다.
+    """
+
+    min_trading_value_krw: float = 50_000_000_000
+    """상한가 발생일의 거래대금 필터 (500억원). 정확한 거래대금 데이터가 없을 경우
+    data/loader.py 의 근사식(OHLC4 * 거래량)으로 대체 산출."""
+
+    entry_valid_days: int = 7
+    """상한가 발생일 기준 며칠 이내에만 신규 진입 허용."""
+
+    hold_days: int = 4
+    """매수일 포함 며칠차에는 보유 물량을 전량 매도(수익/손실 무관 강제 청산)."""
+
+    position_size_pct: float = 0.03
+    """1회 신규 진입 시 총자본 대비 투입 비중. risk-manager가 예시로 든 3% 수준을 기본값으로 채택."""
+
+    addon_size_pct: float = 0.03
+    """추가매수 시 추가로 투입하는 비중."""
+
+    max_position_pct: float = 0.06
+    """단일 종목 노출 한도(초기 진입 + 추매 합산). position_size_pct + addon_size_pct 와 일치해야 함."""
+
+    max_concurrent_positions: int = 10
+    """동시 보유 가능한 최대 종목 수. 자본이 소수 종목에 과집중되는 것을 방지."""
+
+    initial_capital_krw: float = 100_000_000
+    """백테스트 초기 자본 (1억원, 예시)."""
+
+    slippage_pct: float = 0.0
+    """모든 체결가에 적용하는 편도 슬리피지 비율. 매수는 (1+slippage_pct)배 더 비싸게, 매도는
+    (1-slippage_pct)배 더 싸게 체결된 것으로 가정한다(backtest/engine.py: apply_slippage).
+    기본값 0(끔)이라 기존 백테스트 결과와 100% 호환된다. [[project-kplus-backtest-engine]]에서
+    확인한 "장중 터치=정확히 그 가격 체결"이라는 낙관적 가정(모든 기법 공통, SR/K1/K2/K1+/K2+)이
+    고빈도 거래에서 복리로 누적되면 CAGR을 비현실적으로 부풀릴 수 있음이 드러나, 이를 검증하기
+    위해 도입했다. 0.003(왕복 약 0.6%, 국내 소형주 실거래 스프레드+수수료 감안 시 보수적인 추정치)
+    부터 스윕해볼 것을 권장."""
+
+
+@dataclass(frozen=True)
+class SRConfig(PortfolioConfig):
+    """SR(상한가리바운딩) 백테스트 파라미터.
+
+    값의 출처는 research/step_1_SR기법.md 의 "핵심 진입/청산 규칙"(§2)과
+    "검색식/스크리닝 공식"(§3)을 그대로 따른다.
+    """
+
+    # --- 상한가 판정 (limits.py) ---
+    limit_up_return_threshold: float = 0.295
+    """전일 종가 대비 등락률이 이 값 이상이고 당일 고가==당일 종가일 때 '진짜 상한가'로 판정.
+    원 자료 K1_v1 검색식의 29.5% 기준을 그대로 채택 (2015-06-15 이후 ±30% 제한폭 기준).
+    2026-08-08 step_0_공통자료.md §1: 강사 최종(버그수정) 버전은 0.299 — 민감도 분석 결과(§13)
+    0.299는 승률은 개선되지만 CAGR/MDD가 악화되는 트레이드오프가 있어 의도적으로 바꾸지 않았다."""
+
+    # --- R0~R3 그리드 ---
+    grid_divisions: int = 3
+    """R0(상한가)~R3(전일종가) 구간을 3등분. R1=R0-AB, R2=R0-2AB, AB=(R0-R3)/3."""
+
+    # --- 정성적 배제 필터 근사치 (2026-08-08 step_0_common 추가조사 기반, strategies/qualitative.py) ---
+    # 원 자료(무공방/긴N자/동테마 후발주 등)는 강사의 재량적 차트 판단이라 순수 가격 데이터만으로
+    # 완벽히 재현할 수 없다. 여기 값들은 research/step_0_공통자료.md §3~5,7 에서 확인된 정의를
+    # 코드화할 수 있는 형태로 근사한 것이며, "출발점"이지 검증된 최적값이 아니다(§4 원문 인용).
+    # 기본값은 False로 꺼져 있어 기존 순수 정량 백테스트 동작을 바꾸지 않는다 — 활성화 시에만 적용.
+    # 2026-08-09 컴포넌트별 기여도/민감도 분석 결과: 무공방 필터는 이 백테스트 조건(자본1억/동시보유10)
+    # 에서 사실상 효과가 없고(임계값을 아무리 바꿔도 포트폴리오 결과 불변), 선반등 필터는 lookback을
+    # 넓힐수록 꾸준히 성과가 나빠졌다(5일=거의 무해, 15일 기본값=유해, 30일=최악). 어느 구성도
+    # baseline 대비 확실한 개선을 보이지 못해 기본값 False를 유지 중이다 — 자세한 수치는
+    # memory(project-sr-backtest-engine) 참고.
+    qualitative_filter_enabled: bool = False
+    """True로 켜면 아래 점수제 필터를 적용해 score < qualitative_score_threshold 인 신호를 제외한다."""
+
+    qualitative_score_threshold: float = 0.0
+    """바른손 사례(원문)의 '총점 0점이 매수 적정' 기준을 그대로 채택."""
+
+    new_high_lookback_days: int = 120
+    """'120일 신고가' 판정 lookback. 종산2기_SR_수식.pdf의 '고점120일' 정의 그대로."""
+
+    long_n_lookback_days: int = 5
+    long_n_min_total_return: float = 0.15
+    long_n_max_single_day_share: float = 0.6
+    """긴N자(완만한 다단 상승) 근사 판정: 상한가 직전 5거래일 누적수익률이 15% 이상이면서, 그 중
+    특정 하루의 등락률이 전체 누적수익률의 60% 미만(=하루 급등이 아니라 여러 날에 걸친 상승)인 경우.
+    원 자료에 정량 기준이 없어 이번에 새로 설계한 근사치다."""
+
+    no_resistance_lookback_days: int = 60
+    no_resistance_price_ratio: float = 0.85
+    """무공방(매물대 없이 직행) 근사 판정: 최근 60거래일 고가가 상한가 당일 고가의 85%에도 못
+    미치면(=최근 두 달간 근처에도 못 가본 완전히 새로운 가격대) 무공방으로 판정. lookback=60일은
+    질문게시판 원문("대략 3개월 이내")을 영업일로 환산한 근사치."""
+
+    pre_rebound_lookback_days: int = 15
+    """선반등(직전 상한가 이벤트의 재탕) 판정: 이번 상한가 발생일 기준 최근 15거래일 이내에 동일
+    종목의 다른 상한가 이벤트가 있었으면 선반등으로 감점."""
+
+    long_n_penalty: float = -20
+    no_resistance_penalty: float = -15
+    pre_rebound_penalty: float = -10
+    """감점 폭. 긴N자(-20)·선반등(-10)은 바른손 사례(원문)의 실제 배점을 그대로 사용했고,
+    무공방(-15)은 원 사례표에 없어 긴N자와 선반등 사이 값으로 이번에 새로 설정했다(추정치)."""
+
+
+@dataclass(frozen=True)
+class K2Config(PortfolioConfig):
+    """K2 백테스트 파라미터.
+
+    값의 출처는 research/step_2_K2기법.md §2("핵심 진입/청산 규칙")·§3("검색식/스크리닝 공식")이다.
+    **중요**: 원 자료에는 익절/손절의 정량 규칙이 전혀 없다(quant-strategist §7.2, risk-manager §7.3
+    이 반복 지적한 공백). 아래 stop_loss_pct/profit_target_at_high는 K2 자체 문서가 아니라 같은
+    강사의 인접 기법(step_3 K1, step_5 K+)에서 반복 등장하는 "-7% 손절/추매", "4일차 강제청산",
+    "전고점까지 분할익절" 패턴을 K2에 그대로 차용해 신규 설계한 것이며, K2 원문에서 검증된 값이
+    아니다 — 이 점을 반드시 결과 해석 시 감안해야 한다.
+    """
+
+    limit_up_return_threshold: float = 0.295
+    """SRConfig와 동일한 근사 기준(§상세설명은 SRConfig 참고)."""
+
+    fib_k2_ratio: float = 0.5
+    """0.5 되돌림선(K2). 원문: "0.5선을 K2라 부른다"."""
+
+    pre_rally_lookback_days: int = 5
+    """되돌림 기준 저점(DLL) 산출용 lookback. 원문 5분봉 기준 "상한가 직전 RSI 과매도 지점"을
+    일봉 데이터만으로는 재현할 수 없어(장중 데이터 부재), 상한가 발생일을 포함해 그 이전
+    5거래일(원문 DLL 수식의 npredaylow(1)~(5) 범위와 동일한 폭) 중 최저가를 저점 기준으로 근사한다.
+    **이 저점은 상한가 발생 시점에 한 번 고정되며, 이후 눌림에 따라 갱신되지 않는다** — SR의
+    R0~R3 그리드가 상한가 당일 값으로 고정되는 것과 동일한 방식으로 단순화했다. (초기 구현은
+    상한가 이후의 롤링 최저가를 저점으로 썼으나, 이 경우 상한가 다음날 어떤 하락이든 정의상
+    항상 그날 자신의 저가가 되돌림선을 트리거하는 자기순환적 문제가 있어 폐기했다.)"""
+
+    stop_loss_pct: float = -0.07
+    """(신규 설계) 진입가 대비 -7% 하락 시 손절. 원문에 없음 — step_3(K1)/step_5(K+) 문서의
+    '-7% 하락시 추매(대장주) 또는 손절(그 외)' 패턴에서, 1등주 판정을 자동화할 수 없다는 한계상
+    '그 외' 케이스(손절)로 통일해 차용했다. 추매 로직은 이번 버전에 구현하지 않는다."""
+
+
+@dataclass(frozen=True)
+class K1Config(PortfolioConfig):
+    """K1 백테스트 파라미터.
+
+    값의 출처는 research/step_3_K1기법.md §2("핵심 진입/청산 규칙")·§3("검색식/스크리닝 공식")이다.
+    K1과 K2는 동일한 피보나치 셋업(상한가 발생일에 고정된 RH/RL)에서 되돌림 비율만 다른 두 기준선
+    (K1=0.236 얕은 눌림 / K2=0.5 깊은 눌림, §4)이라 RH/RL 산출 방식은 K2Config와 동일하게 맞췄다.
+    **중요**: 원 자료에는 명시적 가격 손절가가 없다(§7.3 risk-manager 지적). 아래 stop_loss_pct는
+    K2Config와 동일하게 '-7% 하락시 추매(대장주)/손절(그 외)' 패턴에서 차용한 신규 설계이며 검증된
+    값이 아니다.
+    """
+
+    limit_up_return_threshold: float = 0.295
+    """SRConfig/K2Config와 동일한 근사 기준."""
+
+    fib_k1_ratio: float = 0.236
+    """0.236 되돌림선(K1). 원문: "0.236선을 K1이라 부른다"."""
+
+    pre_rally_lookback_days: int = 5
+    """K2Config와 동일한 근사(상세 설명은 K2Config 참고). RH/RL을 상한가 발생 시점에 고정해
+    자기순환적 결함(롤링 저점을 쓰면 당일 저가가 당일 되돌림선을 정의상 항상 만족하는 버그)을
+    피한다 — [[project-k2-backtest-engine]] 참고."""
+
+    entry_valid_days: int = 2
+    """원문 §2-4 "매수 가능 기간: 상한가 당일 제외, D+1·D+2까지만"을 그대로 반영해
+    PortfolioConfig 기본값(7)을 오버라이드한다. K2(entry_valid_days=7)보다 훨씬 짧다."""
+
+    stop_loss_pct: float = -0.07
+    """(신규 설계) K2Config와 동일한 근거로 차용."""
+
+
+@dataclass(frozen=True)
+class KPlusConfig(PortfolioConfig):
+    """K+ 시리즈(K1플러스/K2플러스) 공통 파라미터.
+
+    값의 출처는 research/step_5_K+기법.md §2("핵심 진입/청산 규칙")·§3("검색식/스크리닝 공식")이다.
+    K+ 시리즈는 **"세력봉"(power candle) 이벤트를 트리거**로 쓴다는 점이 SR/K1/K2(상한가 트리거)와
+    다르다. **중요**: 세력봉 판정식의 파라미터(세력봉대금/상한가대금/고가기간)는 원문에 실제 수치가
+    없다(§8-1, risk-manager §7.3 "이 상태로는 자동매매 코드로 옮길 수 없음"). 원문 §2가 별도로
+    명시한 "500억 이상 대금"이라는 프로즈 기준을 두 파라미터 모두에 공용으로 적용해 근사했다
+    (min_trading_value_krw 재사용, PortfolioConfig 기본값 그대로).
+    """
+
+    limit_up_return_threshold: float = 0.295
+    """SR/K1/K2Config와 동일한 근사 기준. 세력봉 판정식의 UL() 분기("if(UL(), AA, A)")에 사용."""
+
+    pre_event_lookback_days: int = 5
+    """세력봉 발생 직전 되돌림 저점(RSI 과매도 지점 근사) 산출용 lookback. **세력봉 발생일 자신은
+    포함하지 않는다** — [[project-k2-backtest-engine]]/[[project-k1-backtest-engine]]에서 확인한
+    자기순환적 결함(저점 계산 구간에 진입 판정 대상일 자신이 들어가면, 그날 저가가 정의상 항상
+    되돌림선을 만족해버리는 버그)을 피하기 위한 설계다. K+는 세력봉 당일(또는 그 이후 며칠) 자체가
+    진입 유효 구간이라 K1/K2(원조)처럼 '이벤트 다음날부터 진입'으로 자연히 분리할 수 없어서,
+    대신 저점 계산 구간에서 이벤트 당일을 명시적으로 제외하는 방식으로 동일한 함정을 회피한다."""
+
+    candle_range_ratio: float = 1.15
+    """세력봉 판정식(원문 §3) 조건 A: 고가가 전일종가의 이 배율 이상(C(1)*1.15<=H) AND 고가가
+    저가의 이 배율 이상(L*1.15<=H). 원문 수식 값 그대로."""
+
+    candle_body_ratio: float = 1.09
+    """세력봉 판정식 조건 A: 종가가 시가의 이 배율 이상(O*1.09<=C). 원문 수식 값 그대로."""
+
+    stop_loss_pct: float = -0.07
+    """원문에 -7% 손절/추매 기준이 명시(§2). 추매는 '시장중심주/1등주' 판정 자동화가 불가능해
+    (SR/K1/K2와 동일한 한계) 전량 손절로 통일했다."""
+
+    hold_days: int = 4
+    """K1+는 원문에 "매수 4일차 전량매도(무조건)"가 명시(§2). K2+는 원문에 별도 시간청산 규칙이
+    없으나, SR/K1/K2 전 기법에 반복 등장하는 4일차 강제청산 패턴을 그대로 차용했다."""
+
+
+@dataclass(frozen=True)
+class K1PlusConfig(KPlusConfig):
+    """K1플러스(종가베팅) 파라미터.
+
+    원문 §2: "세력봉 직전 RSI 과매도~세력봉 고점까지 피보나치를 긋고 0.236선(K1+)을 하향 이탈하면
+    세력봉 당일 종가에 매수", "매수는 당일만 유효". 익절은 "+4%~직전 고점까지 분할매도"를 K2Config와
+    동일한 방식(구간 상단인 전고점에서 전량 익절)으로 단순화했다.
+    """
+
+    fib_ratio: float = 0.236
+    """0.236 되돌림선(K1+). 원문: "0.236선(K1+)"."""
+
+    entry_valid_days: int = 1
+    """원문 "매수는 당일만 유효"를 반영 — 세력봉 발생일(day0) 하루만 진입 유효."""
+
+
+@dataclass(frozen=True)
+class K2PlusConfig(KPlusConfig):
+    """K2플러스(장중매매) 파라미터.
+
+    원문 §2: "세력봉 직전 RSI과매도~세력봉 직전 고점까지 피보나치, 0.5선(K2+) 하향 이탈 시 장중
+    즉시 매수"(고점 기준은 K1PlusConfig와 마찬가지로 세력봉 당일 고가로 통일 — SR/K1/K2와 동일한
+    단순화), "매수 가능 기간: 고점 갱신일 포함 4일차까지". 익절은 "+4%~+7% 구간 분할매도"를
+    구간 상단(+7%)에서 전량 익절로 단순화했다.
+    """
+
+    fib_ratio: float = 0.5
+    """0.5 되돌림선(K2+). 원문: "0.5선(K2+)"."""
+
+    entry_valid_days: int = 4
+    """원문 "매수 가능 기간: 고점 갱신일 포함 4일차까지"를 반영 — 세력봉 발생일(day0)을 포함해
+    총 4일(day0~day3) 동안 진입 유효. PortfolioConfig 기본값(7, D+1부터 카운트하는 SR/K2의 의미)과
+    카운트 기준이 달라 strategies/kplus.py 내에서 별도로 해석한다."""
+
+    profit_target_pct: float = 0.07
+    """원문 "+4%~+7% 구간 분할매도"의 상단값(+7%)을 단일 익절가로 단순화 — SR/K2/K1이 분할매도
+    구간의 상단을 단일 익절가로 쓴 것과 동일한 방식."""

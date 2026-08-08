@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+*.egg-info/
+build/
+dist/
+
+# 계정 정보(모의투자 id/password 등) 포함 — 커밋 금지
+info.md
+
+# 강의 원자료(저작권 있는 PDF/docx/pptx/이미지, ~500MB) — 로컬 전용, 원격 저장소에 올리지 않음
+step_0_common/
+step_1/
+step_2/
+step_3/
+step_4/
+step_5/
+report/
+
+# 이 프로젝트와 무관한 별도 참고자료
+harness-100-main/
+
+# Claude Code 세션 런타임 아티팩트(매 세션 변경, 커밋 의미 없음)
+.claude/scheduled_tasks.lock

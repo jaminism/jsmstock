@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"D:/dev/rich_stock/.claude/hooks/session_start_load_history.py\"",
+            "timeout": 15,
+            "statusMessage": "history.md 불러오는 중..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"D:/dev/rich_stock/.claude/hooks/session_end_save_history.py\"",
+            "timeout": 30,
+            "statusMessage": "history.md에 대화 기록 저장 중..."
+          }
+        ]
+      }
+    ]
+  }
+}
