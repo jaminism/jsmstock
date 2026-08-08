@@ -5,6 +5,7 @@ import pytest
 from rich_stock import db
 from rich_stock.config import K2Config
 from rich_stock.strategies.k2 import K2Signal
+from rich_stock.strategies.sp import SPSignal
 from rich_stock.strategies.sr import SRSignal
 
 
@@ -55,6 +56,23 @@ def test_save_signals_for_sr_casts_numpy_scalars(conn):
     assert row[1] == 10000.0
     assert row[2] == 12000.0
     assert '"r0": 13000.0' in row[3]
+
+
+def test_save_signals_for_sp(conn):
+    run_id = "test_run"
+    sig = SPSignal(
+        peak_index=6, peak_date=pd.Timestamp("2024-01-11"),
+        peak_price=235.0, pre_rally_low=98.0, streak_len=3,
+    )
+    db.save_signals(conn, run_id, "SP", "005930", [sig])
+    row = conn.execute(
+        "SELECT ticker, event_date, high, low, level, extra FROM signals WHERE run_id = ?", [run_id]
+    ).fetchone()
+    assert row[0] == "005930"
+    assert row[2] == 235.0
+    assert row[3] == 98.0
+    assert row[4] is None  # 이동평균 기반이라 detect 단계에는 고정 level이 없음
+    assert '"streak_len": 3' in row[5]
 
 
 def test_save_signals_empty_list_is_noop(conn):

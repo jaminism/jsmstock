@@ -5,9 +5,10 @@ from rich_stock.backtest.engine import (
     run_k1_plus_backtest,
     run_k2_backtest,
     run_k2_plus_backtest,
+    run_sp_backtest,
     run_sr_backtest,
 )
-from rich_stock.config import K1Config, K1PlusConfig, K2Config, K2PlusConfig, SRConfig
+from rich_stock.config import K1Config, K1PlusConfig, K2Config, K2PlusConfig, SPConfig, SRConfig
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -185,6 +186,41 @@ def test_k2_plus_engine_runs_and_produces_metrics_for_multiple_tickers():
         "LOSE": _k2_plus_losing_ticker_df(),
     }
     result = run_k2_plus_backtest(ohlcv, K2PlusConfig(initial_capital_krw=100_000_000))
+
+    assert result.metrics.n_trades == 2
+    assert result.metrics.n_wins == 1
+    assert result.metrics.n_losses == 1
+    assert not result.portfolio.equity_curve.empty
+
+
+_SP_TEST_CONFIG = SPConfig(
+    streak_min_len=3, min_rise_pct=1.0, pre_rally_lookback_days=3, peak_search_days=2,
+    ma_short=3, ma_long=5, entry_valid_days=10, min_trading_value_krw=0, initial_capital_krw=100_000_000,
+)
+
+
+def _sp_winning_ticker_df():
+    # 진입(224 부근) 후 빠르게 반등 -> +5% 절반매도 + 저점대비 17% 전량매도로 순이익 마감
+    closes = [100, 100, 100, 130, 169, 219.7, 230, 222, 260, 280]
+    highs = [100, 100, 100, 130, 169, 219.7, 235, 225, 270, 290]
+    lows = [98, 98, 98, 100, 130, 169, 220, 215, 250, 260]
+    return make_df(closes, highs=highs, lows=lows)
+
+
+def _sp_losing_ticker_df():
+    # 진입 후 계속 하락 -> 2차(20일선)/3차(-7%) 추매까지 갔다가 4일 강제청산으로 손실 마감
+    closes = [100, 100, 100, 130, 169, 219.7, 230, 225, 200, 190, 180, 170, 165, 160, 158, 156, 154, 152, 150, 148]
+    highs = [100, 100, 100, 130, 169, 219.7, 235, 228, 205, 195, 185, 175, 168, 163, 161, 159, 157, 155, 153, 151]
+    lows = [98, 98, 98, 100, 130, 169, 220, 198, 188, 178, 168, 158, 155, 150, 148, 146, 144, 142, 140, 138]
+    return make_df(closes, highs=highs, lows=lows)
+
+
+def test_sp_engine_runs_and_produces_metrics_for_multiple_tickers():
+    ohlcv = {
+        "WIN": _sp_winning_ticker_df(),
+        "LOSE": _sp_losing_ticker_df(),
+    }
+    result = run_sp_backtest(ohlcv, _SP_TEST_CONFIG)
 
     assert result.metrics.n_trades == 2
     assert result.metrics.n_wins == 1
