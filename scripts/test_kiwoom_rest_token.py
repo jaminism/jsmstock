@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from rich_stock.broker.kiwoom_rest import KiwoomRestClient, load_credentials
+from rich_stock.broker.kiwoom_rest import KiwoomRestClient, load_credentials, query_deposit, query_holdings
 
 
 def main() -> None:
@@ -24,6 +24,21 @@ def main() -> None:
     print(f"  token_type: {token.token_type}")
     print(f"  expires_dt: {token.expires_dt}")
     print(f"  token(앞 10자리만): {token.token[:10]}...")
+
+    print("\n예수금 조회 중... (kt00001)")
+    deposit = query_deposit(client)
+    for k, v in deposit.items():
+        if k == "_raw":
+            continue
+        print(f"  {k}: {v:,}" if isinstance(v, int) else f"  {k}: {v}")
+
+    print("\n보유종목 조회 중... (kt00018)")
+    holdings = query_holdings(client)
+    if holdings:
+        for h in holdings:
+            print(f"  {h}")
+    else:
+        print("  보유 종목 없음")
 
 
 if __name__ == "__main__":

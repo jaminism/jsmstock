@@ -7,11 +7,15 @@ HTTP 기반이라 `requests`만으로 이 프로젝트의 나머지 코드와 �
 **도메인 구분이 중요하다**: 모의투자는 `mockapi.kiwoom.com`, 실서버는 `api.kiwoom.com` — 반드시
 모의투자 도메인으로 시작할 것(`KiwoomRestClient`의 기본값이 모의투자).
 
-**현재 상태(WIP)**: 토큰 발급(POST /oauth2/token)만 문서를 확보해 구현했다. 계좌잔고/보유종목
-조회 TR 엔드포인트는 아직 문서를 확보하지 못해 미구현 — 확보되는 대로 이어서 구현할 것.
-
 인증키(appkey/secretkey)는 코드나 대화창에 직접 넣지 않고 로컬 파일(`kiwoom_credentials.json`,
 git 추적 제외)에서 읽는다 — load_credentials() 참고.
+
+**TR 요청 공통 규약** (사용자가 확보한 kiwoom-rest-api-spec.json으로 확인):
+계좌/시세 등 대부분의 TR은 전부 `POST {base_url}/api/dostk/acnt` 한 엔드포인트를 공유하고,
+TR 코드는 body가 아니라 **`api-id` 헤더**로 구분한다. `cont-yn`/`next-key` 헤더는 페이지네이션용
+(응답 헤더에 돌아온 값을 다음 요청에 그대로 실어 보내면 이어서 조회). 응답 필드는 전부 문자열이고
+금액류는 부호+15자리 0-padding(예: "-00000000004900" = -4,900원) — `_parse_amount()`로 정수 변환.
+계좌번호는 body에 넣지 않는다 — 발급받은 appkey/secretkey가 이미 계좌 하나에 연결되어 있다.
 """
 
 from __future__ import annotations
@@ -21,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
+
+ACCOUNT_TR_URL_PATH = "/api/dostk/acnt"
 
 MOCK_BASE_URL = "https://mockapi.kiwoom.com"
 LIVE_BASE_URL = "https://api.kiwoom.com"
@@ -95,3 +101,68 @@ class KiwoomRestClient:
             "Content-Type": "application/json;charset=UTF-8",
             "Authorization": f"{self.token.token_type} {self.token.token}",
         }
+
+    # --- TR 요청 공용 -----------------------------------------------------
+
+    def request_tr(self, api_id: str, body: dict, cont_yn: str = "N", next_key: str = "") -> dict:
+        """계좌 관련 TR 공용 호출. 응답 JSON을 그대로 반환한다(return_code!=0이면 예외 발생).
+
+        cont_yn/next_key는 연속조회(페이지네이션)용 — 응답 헤더의 값을 다음 호출에 그대로 넘기면
+        이어서 조회된다. 첫 호출은 기본값(N, 빈 문자열)이면 된다.
+        """
+        headers = {
+            **self.auth_headers(),
+            "api-id": api_id,
+            "cont-yn": cont_yn,
+            "next-key": next_key,
+        }
+        resp = requests.post(f"{self.base_url}{ACCOUNT_TR_URL_PATH}", headers=headers, json=body, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("return_code", 0) != 0:
+            raise RuntimeError(f"[{api_id}] TR 실패: {data.get('return_msg')} (전체 응답: {data})")
+        return data
+
+
+def _parse_amount(raw: str) -> int:
+    """키움 REST 응답의 부호+0-padding 숫자 문자열을 정수로 변환. 빈 문자열은 0으로 취급."""
+    raw = (raw or "").strip()
+    if not raw:
+        return 0
+    sign = -1 if raw.startswith("-") else 1
+    digits = raw.lstrip("+-") or "0"
+    return sign * int(digits)
+
+
+def query_deposit(client: KiwoomRestClient) -> dict:
+    """kt00001(예수금상세현황요청) — 예수금/출금가능금액/주문가능금액 등 핵심 필드만 정리해 반환.
+
+    qry_tp="3"(추정조회) 사용 — 스펙 예시와 동일. 전체 원본 응답은 반환값에 "_raw"로 포함한다.
+    """
+    data = client.request_tr("kt00001", {"qry_tp": "3"})
+    return {
+        "예수금": _parse_amount(data.get("entr")),
+        "출금가능금액": _parse_amount(data.get("pymn_alow_amt")),
+        "주문가능금액": _parse_amount(data.get("ord_alow_amt")),
+        "d2추정예수금": _parse_amount(data.get("d2_entra")),
+        "_raw": data,
+    }
+
+
+def query_holdings(client: KiwoomRestClient) -> list[dict]:
+    """kt00018(계좌평가잔고내역요청) — 보유종목 리스트. qry_tp="1"(합산)/dmst_stex_tp="KRX" 고정."""
+    data = client.request_tr("kt00018", {"qry_tp": "1", "dmst_stex_tp": "KRX"})
+    holdings = []
+    for row in data.get("acnt_evlt_remn_indv_tot", []):
+        holdings.append(
+            {
+                "종목코드": row.get("stk_cd"),
+                "종목명": row.get("stk_nm"),
+                "보유수량": _parse_amount(row.get("rmnd_qty")),
+                "매입가": _parse_amount(row.get("pur_pric")),
+                "현재가": _parse_amount(row.get("cur_prc")),
+                "평가손익": _parse_amount(row.get("evltv_prft")),
+                "수익률(%)": row.get("prft_rt"),
+            }
+        )
+    return holdings
