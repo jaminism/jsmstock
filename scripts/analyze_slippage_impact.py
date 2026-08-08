@@ -1,6 +1,6 @@
-"""전 기법(SR/K1/K2/K1+/K2+) 슬리피지 민감도 일괄 분석.
+"""전 기법(S1/S2/S3/S2+/S3+) 슬리피지 민감도 일괄 분석.
 
-[[project-kplus-backtest-engine]]에서 K2+의 CAGR+68%가 "장중 터치=정확히 그 가격 체결"이라는
+[[project-kplus-backtest-engine]]에서 S3+의 CAGR+68%가 "장중 터치=정확히 그 가격 체결"이라는
 낙관적 가정과 고빈도 거래(평균 보유 1.8일, 연 1000건+)의 복리효과로 부풀려졌음을 확인했다.
 이 스크립트는 backtest/engine.py에 새로 추가한 PortfolioConfig.slippage_pct를 0%부터 스윕해
 5개 기법 모두에서 CAGR/승률/샤프가 얼마나 깨지는지 한 번에 비교한다 — 데이터는 한 번만 로드하고
@@ -21,24 +21,24 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 from rich_stock.backtest.engine import (
-    run_k1_backtest,
-    run_k1_plus_backtest,
-    run_k2_backtest,
-    run_k2_plus_backtest,
-    run_sr_backtest,
+    run_s1_backtest,
+    run_s2_backtest,
+    run_s3_backtest,
+    run_s4_backtest,
+    run_s5_backtest,
 )
-from rich_stock.config import K1Config, K1PlusConfig, K2Config, K2PlusConfig, SRConfig
+from rich_stock.config import S1Config, S2Config, S3Config, S4Config, S5Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
 
 SLIPPAGE_LEVELS = [0.0, 0.001, 0.003, 0.005, 0.01, 0.02]
 
 TECHNIQUES = [
-    ("SR", run_sr_backtest, SRConfig()),
-    ("K1", run_k1_backtest, K1Config()),
-    ("K2", run_k2_backtest, K2Config()),
-    ("K1+", run_k1_plus_backtest, K1PlusConfig()),
-    ("K2+", run_k2_plus_backtest, K2PlusConfig()),
+    ("S1", run_s1_backtest, S1Config()),
+    ("S2", run_s2_backtest, S2Config()),
+    ("S3", run_s3_backtest, S3Config()),
+    ("S4", run_s4_backtest, S4Config()),
+    ("S5", run_s5_backtest, S5Config()),
 ]
 
 

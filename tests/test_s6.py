@@ -1,8 +1,13 @@
 import pandas as pd
 import pytest
 
-from rich_stock.config import SPConfig
-from rich_stock.strategies.sp import SPSignal, backtest_ticker, detect_sp_signals, simulate_sp_trade
+from rich_stock.config import S6Config
+from rich_stock.strategies.s6 import (
+    S6Signal,
+    backtest_ticker,
+    detect_s6_signals,
+    simulate_s6_trade,
+)
 
 
 def _detect_df(opens, highs, lows, closes, trading_value=100_000_000_000):
@@ -17,7 +22,7 @@ def _detect_df(opens, highs, lows, closes, trading_value=100_000_000_000):
     return df, dates
 
 
-# --- detect_sp_signals -----------------------------------------------------
+# --- detect_s6_signals -----------------------------------------------------
 
 
 def test_detect_signal_for_qualifying_streak():
@@ -28,7 +33,7 @@ def test_detect_signal_for_qualifying_streak():
     lows = [4800, 4900, 5000, 6500, 8450, 14000, 13500]
     closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000]
     df, dates = _detect_df(opens, highs, lows, closes)
-    signals = detect_sp_signals(df, SPConfig())
+    signals = detect_s6_signals(df, S6Config())
     assert len(signals) == 1
     sig = signals[0]
     assert sig.streak_len == 3
@@ -44,7 +49,7 @@ def test_no_signal_when_streak_too_short():
     lows = [4800, 5000, 6500, 5900]
     closes = [5000, 6500, 8450, 6000]
     df, _ = _detect_df(opens, highs, lows, closes)
-    signals = detect_sp_signals(df, SPConfig())
+    signals = detect_s6_signals(df, S6Config())
     assert signals == []
 
 
@@ -56,11 +61,11 @@ def test_no_signal_when_rise_below_threshold():
     closes = [8000, 8000, 10400, 13520, 17576, 17700, 17500]
     df, _ = _detect_df(opens, highs, lows, closes)
     # 상승률 = 17700/7900 - 1 = 124% < 200%
-    signals = detect_sp_signals(df, SPConfig())
+    signals = detect_s6_signals(df, S6Config())
     assert signals == []
 
 
-# --- simulate_sp_trade (합성 이동평균 시리즈로 진입/청산 로직만 검증) ----------
+# --- simulate_s6_trade (합성 이동평균 시리즈로 진입/청산 로직만 검증) ----------
 
 
 def _sim_df(opens, highs, lows, closes):
@@ -84,8 +89,8 @@ def test_entry_ma15_partial_and_full_exit_without_addon():
     ma_short = pd.Series([100] * 6, index=dates)
     ma_long = pd.Series([1] * 6, index=dates)  # 절대 터치되지 않도록 아주 낮게 고정 -> 2차매수 없음
 
-    signal = SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
-    trade = simulate_sp_trade(df, signal, SPConfig(entry_valid_days=5), "TEST", ma_short, ma_long)
+    signal = S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
+    trade = simulate_s6_trade(df, signal, S6Config(entry_valid_days=5), "TEST", ma_short, ma_long)
 
     assert trade is not None
     reasons = [f.reason for f in trade.fills]
@@ -105,8 +110,8 @@ def test_addon_ma20_triggers_reverse_triangle_exit_at_entry1_price():
     ma_short = pd.Series([100] * 5, index=dates)
     ma_long = pd.Series([90] * 5, index=dates)
 
-    signal = SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
-    trade = simulate_sp_trade(df, signal, SPConfig(entry_valid_days=5, hold_days=4), "TEST", ma_short, ma_long)
+    signal = S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
+    trade = simulate_s6_trade(df, signal, S6Config(entry_valid_days=5, hold_days=4), "TEST", ma_short, ma_long)
 
     assert trade is not None
     reasons = [f.reason for f in trade.fills]
@@ -128,8 +133,8 @@ def test_addon3_switches_exit_target_to_entry2_price():
     ma_short = pd.Series([100] * 6, index=dates)
     ma_long = pd.Series([90] * 6, index=dates)
 
-    signal = SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
-    trade = simulate_sp_trade(df, signal, SPConfig(entry_valid_days=5, hold_days=4), "TEST", ma_short, ma_long)
+    signal = S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3)
+    trade = simulate_s6_trade(df, signal, S6Config(entry_valid_days=5, hold_days=4), "TEST", ma_short, ma_long)
 
     assert trade is not None
     reasons = [f.reason for f in trade.fills]
@@ -148,10 +153,10 @@ def test_forced_exit_4_days_after_addon_ma20_when_no_target_hit():
     ma_short = pd.Series([100] * 6, index=dates)
     ma_long = pd.Series([90] * 6, index=dates)
 
-    trade = simulate_sp_trade(
+    trade = simulate_s6_trade(
         df,
-        SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
-        SPConfig(entry_valid_days=5, hold_days=4),
+        S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
+        S6Config(entry_valid_days=5, hold_days=4),
         "TEST", ma_short, ma_long,
     )
 
@@ -172,10 +177,10 @@ def test_no_time_stop_and_unbounded_hold_when_only_entry1():
     ma_short = pd.Series([100] * 5, index=dates)
     ma_long = pd.Series([1] * 5, index=dates)  # 절대 터치 안 됨
 
-    trade = simulate_sp_trade(
+    trade = simulate_s6_trade(
         df,
-        SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
-        SPConfig(entry_valid_days=5),
+        S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
+        S6Config(entry_valid_days=5),
         "TEST", ma_short, ma_long,
     )
 
@@ -194,10 +199,10 @@ def test_no_entry_when_ma15_never_touched():
     ma_short = pd.Series([100] * 5, index=dates)
     ma_long = pd.Series([1] * 5, index=dates)
 
-    trade = simulate_sp_trade(
+    trade = simulate_s6_trade(
         df,
-        SPSignal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
-        SPConfig(entry_valid_days=5),
+        S6Signal(peak_index=0, peak_date=dates[0], peak_price=999, pre_rally_low=1, streak_len=3),
+        S6Config(entry_valid_days=5),
         "TEST", ma_short, ma_long,
     )
     assert trade is None
@@ -213,7 +218,7 @@ def test_backtest_ticker_end_to_end_with_real_rolling_averages():
     opens = closes
     df, dates = _sim_df(opens, highs, lows, closes)
 
-    config = SPConfig(
+    config = S6Config(
         streak_min_len=3, min_rise_pct=1.0, pre_rally_lookback_days=3, peak_search_days=2,
         ma_short=3, ma_long=5, entry_valid_days=10, min_trading_value_krw=0,
     )

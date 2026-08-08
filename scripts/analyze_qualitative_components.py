@@ -2,7 +2,7 @@
 
 전체 유니버스 데이터를 한 번만 로드하고, 각 필터 구성요소(긴N자/무공방/선반등)를 개별적으로
 켜서 어떤 항목이 실제로 성과에 도움이 되는지(또는 해가 되는지) 비교한다. 개별 페널티를 0으로
-두면 detect_sr_signals 내부 판정(long_n_shape/no_resistance/pre_rebound)은 그대로 계산되지만
+두면 detect_s1_signals 내부 판정(long_n_shape/no_resistance/pre_rebound)은 그대로 계산되지만
 점수에는 반영되지 않아, 사실상 해당 항목만 "끈" 것과 같다.
 
 사용 예:
@@ -19,8 +19,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from rich_stock.backtest.engine import run_sr_backtest
-from rich_stock.config import SRConfig
+from rich_stock.backtest.engine import run_s1_backtest
+from rich_stock.config import S1Config
 from rich_stock.data.loader import load_universe_ohlcv
 from rich_stock.data.universe import get_universe
 
@@ -43,7 +43,7 @@ def main() -> None:
     ohlcv = load_universe_ohlcv(tickers, args.start, args.end, cache_dir=args.cache_dir)
     print(f"[analyze] {len(ohlcv)}종목 확보. 구성요소별 백테스트 시작...\n")
 
-    base = SRConfig()
+    base = S1Config()
 
     variants = {
         "baseline (필터 없음)": dataclasses.replace(base, qualitative_filter_enabled=False),
@@ -65,7 +65,7 @@ def main() -> None:
 
     rows = []
     for name, config in variants.items():
-        result = run_sr_backtest(ohlcv, config)
+        result = run_s1_backtest(ohlcv, config)
         m = result.metrics
         s = m.signal_level
         row = (

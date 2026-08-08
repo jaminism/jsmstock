@@ -1,10 +1,10 @@
 import pandas as pd
 
-from rich_stock.config import K1PlusConfig, K2PlusConfig
-from rich_stock.strategies.kplus import (
-    backtest_ticker_k1_plus,
-    backtest_ticker_k2_plus,
-    detect_power_candle_signals,
+from rich_stock.config import S4Config, S5Config
+from rich_stock.strategies.s45 import (
+    backtest_ticker_s4,
+    backtest_ticker_s5,
+    detect_s45_signals,
 )
 
 
@@ -28,7 +28,7 @@ def test_detect_power_candle_via_shape_condition():
     lows = [10000, 9900, 11400, 11350, 11300]
     closes = [10000, 11550, 11600, 11550, 11500]
     df = make_df(opens, highs, lows, closes)
-    signals = detect_power_candle_signals(df, K1PlusConfig())
+    signals = detect_s45_signals(df, S4Config())
     assert len(signals) == 1
     assert signals[0].event_index == 1
     assert signals[0].high == 11600
@@ -41,7 +41,7 @@ def test_no_power_candle_when_shape_condition_fails():
     lows = [10000, 10050, 10150, 10250, 10350]
     closes = [10000, 10120, 10220, 10320, 10420]
     df = make_df(opens, highs, lows, closes)
-    signals = detect_power_candle_signals(df, K1PlusConfig())
+    signals = detect_s45_signals(df, S4Config())
     assert signals == []
 
 
@@ -52,7 +52,7 @@ def test_detect_power_candle_via_ul_branch_ignores_shape():
     lows = [10000, 9800, 12700]
     closes = [10000, 13000, 12950]
     df = make_df(opens, highs, lows, closes)
-    signals = detect_power_candle_signals(df, K1PlusConfig())
+    signals = detect_s45_signals(df, S4Config())
     assert len(signals) == 1
     assert signals[0].event_index == 1
 
@@ -65,37 +65,37 @@ def test_rl_lookback_excludes_event_day_itself():
     lows = [10000, 9900, 8000]
     closes = [10000, 10000, 13000]
     df = make_df(opens, highs, lows, closes)
-    signals = detect_power_candle_signals(df, K1PlusConfig(pre_event_lookback_days=5))
+    signals = detect_s45_signals(df, S4Config(pre_event_lookback_days=5))
     assert len(signals) == 1
     assert signals[0].event_index == 2
     assert signals[0].low == 9900  # 8000(이벤트 당일)이 아니라 그 이전 최저가(day0/day1 중)여야 함
 
 
 def test_k1_plus_entry_at_close_same_day_only():
-    # RH=13000, RL=9800(이벤트 이전) -> K1+ = 13000-(13000-9800)*0.236 = 12244.8
-    # 이벤트 당일(index=1) 종가 12000 <= K1+ -> 그날 종가(12000)에 체결
+    # RH=13000, RL=9800(이벤트 이전) -> S2+ = 13000-(13000-9800)*0.236 = 12244.8
+    # 이벤트 당일(index=1) 종가 12000 <= S2+ -> 그날 종가(12000)에 체결
     opens = [10000, 10000, 12100, 12200, 12300]
     highs = [10000, 13000, 12200, 12300, 12400]
     lows = [9800, 11000, 12000, 12100, 12200]
     closes = [10000, 12000, 12150, 12250, 12350]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k1_plus(df, "TEST", K1PlusConfig())
+    trades = backtest_ticker_s4(df, "TEST", S4Config())
     assert len(trades) == 1
     trade = trades[0]
-    assert trade.fills[0].reason == "entry_k1_plus"
+    assert trade.fills[0].reason == "entry_s4"
     assert trade.fills[0].date == df.index[1]
     assert round(trade.fills[0].price) == 12000
 
 
 def test_k1_plus_no_entry_when_close_above_level():
-    # K1+ = 13000-(13000-9800)*0.236 = 12244.8. 이벤트 당일 종가(12500)가 이보다 높으면
+    # S2+ = 13000-(13000-9800)*0.236 = 12244.8. 이벤트 당일 종가(12500)가 이보다 높으면
     # 진입 없음(하루만 유효라 다음날도 무효).
     opens = [10000, 10000, 12600, 12700, 12800]
     highs = [10000, 13000, 12700, 12800, 12900]
     lows = [9800, 11000, 12550, 12600, 12700]
     closes = [10000, 12500, 12650, 12750, 12850]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k1_plus(df, "TEST", K1PlusConfig())
+    trades = backtest_ticker_s4(df, "TEST", S4Config())
     assert trades == []
 
 
@@ -106,7 +106,7 @@ def test_k1_plus_stop_loss():
     lows = [9800, 11000, 11000, 12500, 12600]
     closes = [10000, 12000, 11500, 13000, 13100]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k1_plus(df, "TEST", K1PlusConfig())
+    trades = backtest_ticker_s4(df, "TEST", S4Config())
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[-1].reason == "exit_stop_loss"
@@ -114,30 +114,30 @@ def test_k1_plus_stop_loss():
 
 
 def test_k2_plus_entry_within_window_at_level_price():
-    # RH=13000, RL=9800 -> K2+ = 13000-(13000-9800)*0.5 = 11400
+    # RH=13000, RL=9800 -> S3+ = 13000-(13000-9800)*0.5 = 11400
     # index1(이벤트 당일) 저가(11900) > 11400 -> 미체결. index2 저가(11300)<=11400 -> 11400에 체결
     opens = [10000, 10000, 11500, 11500, 11500]
     highs = [10000, 13000, 11600, 11600, 11600]
     lows = [9800, 11900, 11300, 11350, 11350]
     closes = [10000, 13000, 11450, 11500, 11500]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k2_plus(df, "TEST", K2PlusConfig())
+    trades = backtest_ticker_s5(df, "TEST", S5Config())
     assert len(trades) == 1
     trade = trades[0]
-    assert trade.fills[0].reason == "entry_k2_plus"
+    assert trade.fills[0].reason == "entry_s5"
     assert trade.fills[0].date == df.index[2]
     assert round(trade.fills[0].price) == 11400
 
 
 def test_k2_plus_no_entry_outside_window():
-    # entry_valid_days=4 -> 유효구간 index1~4. K2+=11400. 그 구간 내내 11400보다 위에 머물다가
+    # entry_valid_days=4 -> 유효구간 index1~4. S3+=11400. 그 구간 내내 11400보다 위에 머물다가
     # 구간 밖(index5)에서 처음 하회하면 무효.
     opens = [10000, 10000, 12700, 12600, 12500, 11300]
     highs = [10000, 13000, 12800, 12700, 12600, 11400]
     lows = [9800, 12600, 12500, 12400, 12300, 11200]
     closes = [10000, 13000, 12600, 12500, 12400, 11350]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k2_plus(df, "TEST", K2PlusConfig())
+    trades = backtest_ticker_s5(df, "TEST", S5Config())
     assert trades == []
 
 
@@ -148,7 +148,7 @@ def test_k2_plus_profit_target_plus_7_pct():
     lows = [9800, 11900, 11300, 12100, 12200]
     closes = [10000, 13000, 11450, 12250, 12350]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_k2_plus(df, "TEST", K2PlusConfig())
+    trades = backtest_ticker_s5(df, "TEST", S5Config())
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[-1].reason == "exit_target_high"

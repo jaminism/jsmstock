@@ -29,3 +29,6 @@ harness-100-main/
 
 # Claude Code 세션 런타임 아티팩트(매 세션 변경, 커밋 의미 없음)
 .claude/scheduled_tasks.lock
+
+# 키움 Open API+ 연동용 32비트 가상환경 (로컬 전용, requirements-kiwoom32.txt로 재현 가능)
+.venv32/

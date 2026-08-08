@@ -1,4 +1,4 @@
-"""SR 백테스트용 로컬 데이터 캐시를 구축한다.
+"""S1 백테스트용 로컬 데이터 캐시를 구축한다.
 
 사용 예:
     python scripts/fetch_data.py --start 2022-01-01 --end 2024-12-31 --min-market-cap 300000000000 --limit 300
