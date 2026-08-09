@@ -33,7 +33,7 @@ import pandas as pd
 
 from rich_stock.config import S4Config, S5Config, S45BaseConfig
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
 
 
 @dataclass
@@ -235,6 +235,38 @@ def describe_trade_plan_s4(df: pd.DataFrame, signal: RallySignal, config: S4Conf
         target_price=signal.high,
         target_pct=approx_target_pct,
         target_desc=f"{signal.high:,.0f}원(전고점)",
+    )
+
+
+def plan_entry_order_s4(signal: RallySignal, config: S4Config) -> EntryOrderPlan:
+    """종가베팅, 세력봉 당일 1회만 유효 — 15:20 이후 장마감 임박 폴링으로 조건 판단 후 시장가 매수."""
+    return EntryOrderPlan(order_style="close_bet", limit_price=None, entry_valid_trading_days=config.entry_valid_days)
+
+
+def compute_bracket_s4(fill_price: float, signal: RallySignal, config: S4Config) -> Bracket:
+    """실제 체결가(그날 종가) 기준 -7% 손절, 전고점 익절 — simulate_s4_trade와 동일 규칙."""
+    stop_price = fill_price * (1 + config.stop_loss_pct)
+    return Bracket(
+        stop_price=stop_price, target_price=signal.high, max_hold_trading_days=config.hold_days,
+        stop_reason=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%", target_reason="전고점(RH)",
+    )
+
+
+def plan_entry_order_s5(signal: RallySignal, config: S5Config) -> EntryOrderPlan:
+    """되돌림선에 지정가 매수를 걸어두면 거래소가 터치 시 체결해준다 — entry_valid_days(기본 4일)
+    동안 매일 같은 가격으로 재주문해야 한다."""
+    level = signal.high - (signal.high - signal.low) * config.fib_ratio
+    return EntryOrderPlan(order_style="fixed_limit", limit_price=level, entry_valid_trading_days=config.entry_valid_days)
+
+
+def compute_bracket_s5(fill_price: float, signal: RallySignal, config: S5Config) -> Bracket:
+    """실제 체결가 기준 -7% 손절/+7% 익절 — simulate_s5_trade와 동일 규칙."""
+    stop_price = fill_price * (1 + config.stop_loss_pct)
+    target_price = fill_price * (1 + config.profit_target_pct)
+    return Bracket(
+        stop_price=stop_price, target_price=target_price, max_hold_trading_days=config.hold_days,
+        stop_reason=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%",
+        target_reason=f"매수가 대비 +{config.profit_target_pct * 100:.0f}%",
     )
 
 

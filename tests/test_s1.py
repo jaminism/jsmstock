@@ -1,7 +1,13 @@
 import pandas as pd
 
 from rich_stock.config import S1Config
-from rich_stock.strategies.s1 import backtest_ticker, describe_trade_plan, detect_s1_signals
+from rich_stock.strategies.s1 import (
+    backtest_ticker,
+    compute_bracket_s1,
+    describe_trade_plan,
+    detect_s1_signals,
+    plan_entry_order_s1,
+)
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -137,6 +143,32 @@ def test_describe_trade_plan_uses_fixed_r0_r3_grid():
     assert f"{sig.r0:,.0f}" in plan.target_desc
     assert round(plan.stop_pct, 2) == round((sig.r3 / sig.r1 - 1) * 100, 2)
     assert round(plan.target_pct, 2) == round((sig.r0 / sig.r1 - 1) * 100, 2)
+
+
+def test_plan_entry_order_s1_fixed_limit_at_r1():
+    closes = [10000, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 10000, 10000]
+    df = make_df(closes)
+    sig = detect_s1_signals(df, S1Config())[0]
+
+    plan = plan_entry_order_s1(sig, S1Config())
+
+    assert plan.order_style == "fixed_limit"
+    assert plan.limit_price == sig.r1
+    assert plan.entry_valid_trading_days == S1Config().entry_valid_days
+
+
+def test_compute_bracket_s1_uses_fixed_grid_regardless_of_fill_price():
+    closes = [10000, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 10000, 10000]
+    df = make_df(closes)
+    sig = detect_s1_signals(df, S1Config())[0]
+    config = S1Config()
+
+    bracket = compute_bracket_s1(fill_price=sig.r1 * 1.001, signal=sig, config=config)  # 약간의 슬리피지 가정
+
+    assert bracket.stop_price == sig.r3
+    assert bracket.target_price == sig.r0
+    assert bracket.max_hold_trading_days == config.hold_days
+    assert bracket.is_safety_override is False
 
 
 def test_addon_and_breakeven_partial():

@@ -29,7 +29,7 @@ import pandas as pd
 
 from rich_stock.config import S1Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
 from rich_stock.strategies.qualitative import QualScore, compute_qualitative_score
 
 
@@ -186,4 +186,19 @@ def describe_trade_plan(df: pd.DataFrame, signal: S1Signal, config: S1Config) ->
         target_price=signal.r0,
         target_pct=(signal.r0 / signal.r1 - 1) * 100,
         target_desc=f"{signal.r0:,.0f}원(R0, 상한가고가) — 도달 전 {signal.r2:,.0f}원(R2) 터치 시 추가매수",
+    )
+
+
+def plan_entry_order_s1(signal: S1Signal, config: S1Config) -> EntryOrderPlan:
+    """R1에 지정가 매수를 걸어두면 거래소가 터치 시 체결해준다 — KRX 지정가는 당일만 유효해
+    entry_valid_days에 걸쳐 있는 동안 매일 같은 가격으로 재주문해야 한다."""
+    return EntryOrderPlan(order_style="fixed_limit", limit_price=signal.r1, entry_valid_trading_days=config.entry_valid_days)
+
+
+def compute_bracket_s1(fill_price: float, signal: S1Signal, config: S1Config) -> Bracket:
+    """자동매매 1단계 범위 — 추매(R2)·본절매도는 생략하고 R3 손절/R0 익절만 남긴 단순 브라켓.
+    R0~R3는 상한가 발생 시점에 고정된 그리드라 실제 체결가(fill_price)와 무관하게 그대로 쓴다."""
+    return Bracket(
+        stop_price=signal.r3, target_price=signal.r0, max_hold_trading_days=config.hold_days,
+        stop_reason="R3(전일종가)", target_reason="R0(상한가고가)",
     )

@@ -1,7 +1,13 @@
 import pandas as pd
 
 from rich_stock.config import S3Config
-from rich_stock.strategies.s3 import backtest_ticker, describe_trade_plan, detect_s3_signals
+from rich_stock.strategies.s3 import (
+    backtest_ticker,
+    compute_bracket_s3,
+    describe_trade_plan,
+    detect_s3_signals,
+    plan_entry_order_s3,
+)
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -49,6 +55,35 @@ def test_describe_trade_plan_entry_and_stop_are_fixed_values():
     assert plan.stop_pct == S3Config().stop_loss_pct * 100
     assert plan.target_price == sig.high
     assert round(plan.target_pct, 2) == round((sig.high / sig.s3_level - 1) * 100, 2)
+
+
+def test_plan_entry_order_s3_fixed_limit_at_level():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s3_signals(df, S3Config())[0]
+
+    plan = plan_entry_order_s3(sig, S3Config())
+
+    assert plan.order_style == "fixed_limit"
+    assert plan.limit_price == sig.s3_level
+    assert plan.entry_valid_trading_days == S3Config().entry_valid_days
+
+
+def test_compute_bracket_s3_uses_actual_fill_price_for_stop():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s3_signals(df, S3Config())[0]
+    config = S3Config()
+
+    bracket = compute_bracket_s3(fill_price=sig.s3_level, signal=sig, config=config)
+
+    assert bracket.stop_price == sig.s3_level * (1 + config.stop_loss_pct)
+    assert bracket.target_price == sig.high
+    assert bracket.is_safety_override is False
 
 
 def _scenario_df(day4_close, day4_low, day4_high):

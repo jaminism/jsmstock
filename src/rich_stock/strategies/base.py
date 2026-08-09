@@ -91,3 +91,62 @@ class TradePlan:
     target_price: float | None
     target_pct: float | None
     target_desc: str
+
+
+@dataclass
+class EntryOrderPlan:
+    """자동매매(scripts/local/auto_trader.py)가 진입 주문을 실제로 낼 때 참고하는 계획 —
+    TradePlan(사람이 읽는 설명)과 별개로 프로그램이 문자열 파싱 없이 바로 쓸 수 있는 버전이다.
+
+    order_style:
+      - "fixed_limit": limit_price에 지정가 매수를 걸어두면 거래소가 터치 시 체결해준다
+        (S1/S3/S5). KRX 지정가는 당일만 유효해 entry_valid_trading_days에 걸쳐 있으면
+        매일 같은 가격으로 재주문해야 한다.
+      - "daily_recompute_limit": 매일 값이 바뀌는 기준선(이동평균 등)이라 매일 아침 새
+        limit_price로 재계산해 재주문해야 한다(S6).
+      - "close_bet": 그날 종가가 어떤 레벨 이하로 마감해야 매수되는 방식이라 limit_price가
+        사전에 확정되지 않는다(S2/S4) — 장마감 임박(15:20~) 폴링으로 조건을 판단해 시장가로
+        매수한다.
+    """
+
+    order_style: str
+    limit_price: float | None
+    entry_valid_trading_days: int
+
+
+@dataclass
+class Bracket:
+    """체결 확정 후 계산되는 손절가/익절가/최대 보유 거래일수 — evaluate_bracket()이 이 값들과
+    현재가를 비교해 청산 여부를 판정한다. 1단계 범위는 추매/부분매도 없는 단순 브라켓이다
+    (S1의 추매·본절매도, S6의 단계별 청산은 2단계로 미룸).
+
+    is_safety_override=True는 원문 기법에는 없는 값을 자동매매 안전장치로 추가한 경우다(S6은
+    원문 설계상 가격 손절이 아예 없음) — 사후 분석 시 "이 청산이 원문 규칙이 아니라 안전장치
+    때문"임을 구분할 수 있도록 표시만 하고 값 자체는 넉넉하게 잡아 정상적인 변동에서는 거의
+    발동하지 않게 한다.
+    """
+
+    stop_price: float | None
+    target_price: float | None
+    max_hold_trading_days: int | None
+    stop_reason: str
+    target_reason: str
+    is_safety_override: bool = False
+
+
+def evaluate_bracket(bracket: Bracket, current_price: float, trading_days_held: int) -> str:
+    """Bracket과 현재가/경과 거래일을 비교해 청산 판정을 반환한다.
+
+    "hold" | "exit_stop" | "exit_target" | "exit_forced_hold" 중 하나 — 6개 기법 공통으로
+    쓰는 단일 함수다(simulate_*_trade의 손절/익절 판정과 동일한 부등호 방향: 손절은 현재가가
+    stop_price "이하", 익절은 현재가가 target_price "이상"). 손절과 익절 조건을 같은 폴링에서
+    동시에 만족하면(일봉 시뮬레이션의 "하루 안에 둘 다 터치" 상황과 동일한 종류의 모호함)
+    보수적으로 손절을 먼저 반환한다.
+    """
+    if bracket.stop_price is not None and current_price <= bracket.stop_price:
+        return "exit_stop"
+    if bracket.target_price is not None and current_price >= bracket.target_price:
+        return "exit_target"
+    if bracket.max_hold_trading_days is not None and trading_days_held >= bracket.max_hold_trading_days:
+        return "exit_forced_hold"
+    return "hold"

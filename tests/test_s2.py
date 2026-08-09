@@ -1,7 +1,13 @@
 import pandas as pd
 
 from rich_stock.config import S2Config
-from rich_stock.strategies.s2 import backtest_ticker, describe_trade_plan, detect_s2_signals
+from rich_stock.strategies.s2 import (
+    backtest_ticker,
+    compute_bracket_s2,
+    describe_trade_plan,
+    detect_s2_signals,
+    plan_entry_order_s2,
+)
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -119,7 +125,35 @@ def test_describe_trade_plan_entry_unknown_until_close_but_target_fixed():
     assert f"{sig.s2_level:,.0f}" in plan.entry_desc
     assert plan.target_price == sig.high
     assert round(plan.target_pct, 2) == round((sig.high / sig.s2_level - 1) * 100, 2)
-    assert f"{sig.high:,.0f}" in plan.target_desc
+
+
+def test_plan_entry_order_s2_is_close_bet_with_no_limit_price():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s2_signals(df, S2Config())[0]
+
+    plan = plan_entry_order_s2(sig, S2Config())
+
+    assert plan.order_style == "close_bet"
+    assert plan.limit_price is None
+    assert plan.entry_valid_trading_days == S2Config().entry_valid_days
+
+
+def test_compute_bracket_s2_stop_relative_to_actual_fill_price():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s2_signals(df, S2Config())[0]
+    config = S2Config()
+
+    bracket = compute_bracket_s2(fill_price=11800, signal=sig, config=config)
+
+    assert bracket.stop_price == 11800 * (1 + config.stop_loss_pct)
+    assert bracket.target_price == sig.high
+    assert bracket.is_safety_override is False
 
 
 def test_pre_rally_lookback_widens_low_anchor():

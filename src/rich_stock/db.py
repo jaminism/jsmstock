@@ -22,6 +22,17 @@
       연구용 백테스트가 아니라 실제 의사결정 기록이라 scripts/local/(git 미추적)의 CLI에서만
       쓰는 걸 전제로 한다 — 이 모듈(db.py) 자체는 공개 저장소에 있지만, 여기 담기는 실제 데이터
       (.cache/rich_stock.duckdb)는 완전히 로컬 전용이다.
+  auto_positions(position_id, decision_id, ticker, technique, signal_date, status, order_style,
+                 entry_order_no, entry_valid_until_trading_day, fill_price, fill_quantity,
+                 fill_date, stop_price, target_price, max_hold_trading_days, trading_days_held,
+                 is_safety_override, exit_order_no, exit_reason, last_checked_at, last_price,
+                 note, created_at, updated_at)
+    - 자동매매(scripts/local/auto_trader.py)가 관리하는 "진행 중" 포지션 상태. decisions와
+      역할이 다르다 — decisions는 매수/매도가 실제로 체결된 뒤의 감사기록이고, 여기는 주문
+      제출~체결 대기 중(status='pending_entry')이거나 보유 중(status='open')인 동안 필요한
+      손절가/익절가/경과일 같은 살아있는 상태를 담는다. status='open'이 되는 시점(체결 확인)에
+      비로소 decisions row가 생성되고 decision_id로 연결된다 — 그 전까지 decision_id는 NULL
+      (주문 제출 ≠ 체결 확정이므로 미체결 상태를 decisions에 기록하지 않기 위함).
 """
 
 from __future__ import annotations
@@ -82,6 +93,32 @@ CREATE TABLE IF NOT EXISTS decisions (
     sell_price DOUBLE,
     pnl DOUBLE,
     return_pct DOUBLE,
+    note VARCHAR,
+    created_at TIMESTAMP DEFAULT current_timestamp,
+    updated_at TIMESTAMP DEFAULT current_timestamp
+);
+CREATE TABLE IF NOT EXISTS auto_positions (
+    position_id VARCHAR PRIMARY KEY,
+    decision_id VARCHAR,
+    ticker VARCHAR,
+    technique VARCHAR,
+    signal_date DATE,
+    status VARCHAR,
+    order_style VARCHAR,
+    entry_order_no VARCHAR,
+    entry_valid_until_trading_day INTEGER,
+    fill_price DOUBLE,
+    fill_quantity DOUBLE,
+    fill_date DATE,
+    stop_price DOUBLE,
+    target_price DOUBLE,
+    max_hold_trading_days INTEGER,
+    trading_days_held INTEGER DEFAULT 0,
+    is_safety_override BOOLEAN DEFAULT FALSE,
+    exit_order_no VARCHAR,
+    exit_reason VARCHAR,
+    last_checked_at TIMESTAMP,
+    last_price DOUBLE,
     note VARCHAR,
     created_at TIMESTAMP DEFAULT current_timestamp,
     updated_at TIMESTAMP DEFAULT current_timestamp
@@ -345,6 +382,185 @@ def find_open_decision(conn: duckdb.DuckDBPyConnection, ticker: str) -> str | No
         [ticker],
     ).fetchone()
     return row[0] if row else None
+
+
+# --- auto_positions (자동매매 진행중 포지션 상태) -------------------------
+
+
+def new_position_id(ticker: str) -> str:
+    return f"pos_{ticker}_{uuid.uuid4().hex[:8]}"
+
+
+def create_pending_position(
+    conn: duckdb.DuckDBPyConnection,
+    ticker: str,
+    technique: str,
+    signal_date: str,
+    order_style: str,
+    entry_order_no: str | None = None,
+    entry_valid_until_trading_day: int | None = None,
+    note: str | None = None,
+) -> str:
+    """진입 주문을 막 제출한 상태를 기록한다(status='pending_entry'). Returns: position_id."""
+    position_id = new_position_id(ticker)
+    conn.execute(
+        """
+        INSERT INTO auto_positions (position_id, ticker, technique, signal_date, status,
+                                     order_style, entry_order_no, entry_valid_until_trading_day, note)
+        VALUES (?, ?, ?, ?, 'pending_entry', ?, ?, ?, ?)
+        """,
+        [position_id, ticker, technique, signal_date, order_style, entry_order_no, entry_valid_until_trading_day, note],
+    )
+    return position_id
+
+
+def update_pending_entry_order(conn: duckdb.DuckDBPyConnection, position_id: str, entry_order_no: str) -> None:
+    """KRX 지정가는 당일만 유효해 매일 재주문해야 하는 기법(S1/S3/S5/S6)의 새 주문번호로 갱신한다."""
+    conn.execute(
+        "UPDATE auto_positions SET entry_order_no = ?, updated_at = current_timestamp WHERE position_id = ?",
+        [entry_order_no, position_id],
+    )
+
+
+def confirm_position_fill(
+    conn: duckdb.DuckDBPyConnection,
+    position_id: str,
+    fill_price: float,
+    fill_quantity: float,
+    stop_price: float | None,
+    target_price: float | None,
+    max_hold_trading_days: int | None,
+    fill_date: str | None = None,
+    is_safety_override: bool = False,
+) -> str:
+    """체결이 실제로 확인된 시점에만 호출한다 — status를 'open'으로 바꾸고, 이 시점에 비로소
+    decisions row를 생성해(record_buy) decision_id로 연결한다(주문 제출만으로는 호출 금지 —
+    미체결/부분체결일 수 있어서다). Returns: 새로 생성된 decision_id.
+    """
+    row = conn.execute(
+        "SELECT ticker, technique, signal_date FROM auto_positions WHERE position_id = ?", [position_id]
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"position_id를 찾을 수 없습니다: {position_id}")
+    ticker, technique, signal_date = row
+    decision_id = record_buy(
+        conn, ticker, fill_price, technique=technique, signal_date=str(signal_date) if signal_date else None,
+        buy_date=fill_date, quantity=fill_quantity, note="auto_trader",
+    )
+    conn.execute(
+        """
+        UPDATE auto_positions
+        SET decision_id = ?, status = 'open', fill_price = ?, fill_quantity = ?,
+            fill_date = COALESCE(?, current_date), stop_price = ?, target_price = ?,
+            max_hold_trading_days = ?, is_safety_override = ?, updated_at = current_timestamp
+        WHERE position_id = ?
+        """,
+        [decision_id, fill_price, fill_quantity, fill_date, stop_price, target_price,
+         max_hold_trading_days, is_safety_override, position_id],
+    )
+    return decision_id
+
+
+def close_position(
+    conn: duckdb.DuckDBPyConnection,
+    position_id: str,
+    exit_order_no: str,
+    exit_reason: str,
+    sell_price: float,
+    sell_date: str | None = None,
+) -> None:
+    """청산 체결이 확인된 시점에 호출 — 연결된 decisions row도 함께 닫는다(close_decision)."""
+    row = conn.execute("SELECT decision_id FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    if row is None:
+        raise ValueError(f"position_id를 찾을 수 없습니다: {position_id}")
+    decision_id = row[0]
+    if decision_id:
+        close_decision(conn, decision_id, sell_price, sell_date)
+    conn.execute(
+        """
+        UPDATE auto_positions
+        SET status = 'closed', exit_order_no = ?, exit_reason = ?, updated_at = current_timestamp
+        WHERE position_id = ?
+        """,
+        [exit_order_no, exit_reason, position_id],
+    )
+
+
+def expire_position(conn: duckdb.DuckDBPyConnection, position_id: str, note: str | None = None) -> None:
+    """진입 유효기간이 지나도록 한 번도 체결 안 된 포지션을 종료한다(decisions row 자체가 없음)."""
+    conn.execute(
+        "UPDATE auto_positions SET status = 'expired', note = COALESCE(?, note), updated_at = current_timestamp WHERE position_id = ?",
+        [note, position_id],
+    )
+
+
+def mark_position_error(conn: duckdb.DuckDBPyConnection, position_id: str, note: str) -> None:
+    """브로커 실계좌와 DB 상태가 어긋나는 등 사람이 확인해야 하는 상황 — 자동 재개하지 않고 격리."""
+    conn.execute(
+        "UPDATE auto_positions SET status = 'error', note = ?, updated_at = current_timestamp WHERE position_id = ?",
+        [note, position_id],
+    )
+
+
+def touch_position(conn: duckdb.DuckDBPyConnection, position_id: str, last_price: float) -> None:
+    """매 폴링마다 마지막 확인시각/관측가만 갱신(모니터링/디버깅용, 상태 변경 없음)."""
+    conn.execute(
+        "UPDATE auto_positions SET last_checked_at = current_timestamp, last_price = ? WHERE position_id = ?",
+        [last_price, position_id],
+    )
+
+
+def increment_trading_days_held(conn: duckdb.DuckDBPyConnection) -> None:
+    """하루 중 첫 폴링에서 1회 호출 — 보유 중인 모든 포지션의 경과 거래일을 +1한다."""
+    conn.execute("UPDATE auto_positions SET trading_days_held = trading_days_held + 1 WHERE status = 'open'")
+
+
+def decrement_pending_entry_validity(conn: duckdb.DuckDBPyConnection) -> list[str]:
+    """하루 중 첫 폴링에서 1회 호출 — 진입 대기 중인 포지션의 남은 유효 거래일을 -1한다.
+    0 이하가 된 position_id 목록을 반환하니, 호출부가 expire_position()으로 마감 처리할 것
+    (entry_valid_until_trading_day가 NULL인 포지션은 유효기간 추적 대상이 아니라 건드리지 않음)."""
+    conn.execute(
+        "UPDATE auto_positions SET entry_valid_until_trading_day = entry_valid_until_trading_day - 1 "
+        "WHERE status = 'pending_entry' AND entry_valid_until_trading_day IS NOT NULL"
+    )
+    rows = conn.execute(
+        "SELECT position_id FROM auto_positions WHERE status = 'pending_entry' AND entry_valid_until_trading_day <= 0"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def get_pending_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
+    cols = [
+        "position_id", "ticker", "technique", "signal_date", "order_style",
+        "entry_order_no", "entry_valid_until_trading_day",
+    ]
+    rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'pending_entry'").fetchall()
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def get_open_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
+    cols = [
+        "position_id", "decision_id", "ticker", "technique", "fill_price", "fill_quantity",
+        "stop_price", "target_price", "max_hold_trading_days", "trading_days_held", "is_safety_override",
+    ]
+    rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'open'").fetchall()
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def held_tickers(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """자동매매가 이미 진입 대기/보유 중인 종목 + 수동매매로 보유 중인 종목(decisions.status='open')
+    전부 합친 것 — 신규 후보 선정 시 중복 진입을 막는 데 쓴다."""
+    rows = conn.execute(
+        "SELECT ticker FROM auto_positions WHERE status IN ('pending_entry', 'open') "
+        "UNION SELECT ticker FROM decisions WHERE status = 'open'"
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def count_open_positions(conn: duckdb.DuckDBPyConnection) -> int:
+    """동시보유 한도(max_concurrent_positions) 체크용 — 자동/수동 매매가 슬롯을 공유하므로
+    decisions.status='open' 기준으로 센다(auto_positions.pending_entry는 아직 미체결이라 제외)."""
+    return conn.execute("SELECT count(*) FROM decisions WHERE status = 'open'").fetchone()[0]
 
 
 def load_trades_csv(conn: duckdb.DuckDBPyConnection, run_id: str, technique: str, csv_path: str | Path) -> int:
