@@ -139,6 +139,22 @@ def _signal_row(technique: str, ticker: str, sig: Any) -> dict:
     raise ValueError(f"unknown technique: {technique}")
 
 
+def existing_livescan_signal_dates(conn: duckdb.DuckDBPyConnection, technique: str) -> set[tuple[str, pd.Timestamp]]:
+    """이미 라이브 스캔(run_id가 'livescan_'으로 시작)으로 저장된 (ticker, event_date) 조합.
+
+    라이브 스캔 스크립트(scripts/local/daily_watchlist.py, find_recent_signals.py)는 실행할 때마다
+    최근 며칠치 신호를 전체 히스토리 재계산으로 다시 찾아내는데, 과거 확정봉 기준 신호는 어제
+    계산한 결과와 동일하므로 이미 저장된 조합은 걸러내고 새 신호만 저장하기 위해 쓴다. 백테스트
+    연구용 run(run_id가 livescan_ 이 아닌 것)은 같은 신호를 여러 run에 걸쳐 의도적으로 반복
+    기록할 수 있으므로 이 dedup 대상에서 제외한다.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT ticker, event_date FROM signals WHERE technique = ? AND run_id LIKE 'livescan_%'",
+        [technique],
+    ).fetchall()
+    return {(ticker, pd.Timestamp(event_date)) for ticker, event_date in rows}
+
+
 def save_signals(conn: duckdb.DuckDBPyConnection, run_id: str, technique: str, ticker: str, signals: list) -> None:
     if not signals:
         return
