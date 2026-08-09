@@ -49,7 +49,9 @@ def test_describe_trade_plan_s4_entry_unknown_target_fixed():
     level = sig.high - (sig.high - sig.low) * S4Config().fib_ratio
     assert plan.entry_price is None  # 종가베팅이라 장마감 전까지 확정 안 됨
     assert f"{level:,.0f}" in plan.entry_desc
+    assert plan.stop_pct == S4Config().stop_loss_pct * 100
     assert plan.target_price == sig.high
+    assert round(plan.target_pct, 2) == round((sig.high / level - 1) * 100, 2)
 
 
 def test_describe_trade_plan_s5_entry_stop_target_all_fixed():
@@ -66,7 +68,9 @@ def test_describe_trade_plan_s5_entry_stop_target_all_fixed():
     level = sig.high - (sig.high - sig.low) * config.fib_ratio
     assert plan.entry_price == level
     assert plan.stop_price == level * (1 + config.stop_loss_pct)
+    assert plan.stop_pct == config.stop_loss_pct * 100
     assert plan.target_price == level * (1 + config.profit_target_pct)
+    assert plan.target_pct == config.profit_target_pct * 100
 
 
 def test_no_power_candle_when_shape_condition_fails():

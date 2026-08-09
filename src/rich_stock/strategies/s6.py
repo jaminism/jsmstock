@@ -236,8 +236,10 @@ def describe_trade_plan(df: pd.DataFrame, signal: S6Signal, config: S6Config) ->
             f"{config.ma_long}일선(현재 {ma_long:,.0f}원) 터치 시 2차매수"
         ),
         stop_price=None,
+        stop_pct=None,
         stop_desc="없음 — 원문 설계상 가격 손절이 아예 없는 기법(존버)",
         target_price=None,
+        target_pct=None,
         target_desc=(
             "1차만 보유 시: 매수가+5%부터 절반매도, 저점대비+17%에서 전량매도. "
             "2차매수 이후엔 1차매수가(15일선가)에서 전량청산."

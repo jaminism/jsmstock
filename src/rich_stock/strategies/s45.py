@@ -223,12 +223,17 @@ def describe_trade_plan_s4(df: pd.DataFrame, signal: RallySignal, config: S4Conf
     동일 규칙.
     """
     level = signal.high - (signal.high - signal.low) * config.fib_ratio
+    # 진입가 미확정이라 익절%은 레벨을 진입가의 근사치로 써서 계산한다(실제 체결가는 그날
+    # 종가라 레벨과 정확히 같지 않은 근사값).
+    approx_target_pct = (signal.high / level - 1) * 100
     return TradePlan(
         entry_price=None,
         entry_desc=f"세력봉 당일 종가가 {level:,.0f}원 이하로 마감해야 매수(당일 1회 한정 — 당일이 지났으면 기회 종료)",
         stop_price=None,
+        stop_pct=config.stop_loss_pct * 100,
         stop_desc=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%",
         target_price=signal.high,
+        target_pct=approx_target_pct,
         target_desc=f"{signal.high:,.0f}원(전고점)",
     )
 
@@ -246,7 +251,9 @@ def describe_trade_plan_s5(df: pd.DataFrame, signal: RallySignal, config: S5Conf
         entry_price=level,
         entry_desc=f"{level:,.0f}원 터치 시 매수",
         stop_price=stop_price,
+        stop_pct=config.stop_loss_pct * 100,
         stop_desc=f"{stop_price:,.0f}원(매수가 대비 {config.stop_loss_pct * 100:.0f}%)",
         target_price=target_price,
+        target_pct=config.profit_target_pct * 100,
         target_desc=f"{target_price:,.0f}원(매수가 대비 +{config.profit_target_pct * 100:.0f}%)",
     )

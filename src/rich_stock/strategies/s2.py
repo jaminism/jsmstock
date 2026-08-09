@@ -134,11 +134,16 @@ def describe_trade_plan(df: pd.DataFrame, signal: S2Signal, config: S2Config) ->
     simulate_s2_trade와 동일하게, 손절가도 실제 체결가가 나와야 계산되므로 여기서는 비율만
     설명한다. 익절가(전고점)는 상한가 발생 시점에 고정돼 확정돼 있다.
     """
+    # 진입가가 미확정이라 익절%은 S2선(진입 트리거 레벨)을 진입가의 근사치로 써서 계산한다 —
+    # 실제 체결가(그날 종가)는 S2선 이하이기만 하면 되므로 정확히 같지는 않은 근사값이다.
+    approx_target_pct = (signal.high / signal.s2_level - 1) * 100
     return TradePlan(
         entry_price=None,
         entry_desc=f"종가가 {signal.s2_level:,.0f}원(S2선) 이하로 마감하면 그 종가에 매수",
         stop_price=None,
+        stop_pct=config.stop_loss_pct * 100,
         stop_desc=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%",
         target_price=signal.high,
+        target_pct=approx_target_pct,
         target_desc=f"{signal.high:,.0f}원(전고점)",
     )

@@ -181,7 +181,9 @@ def describe_trade_plan(df: pd.DataFrame, signal: S1Signal, config: S1Config) ->
         entry_price=signal.r1,
         entry_desc=f"{signal.r1:,.0f}원(R1) 터치 시 매수",
         stop_price=signal.r3,
+        stop_pct=(signal.r3 / signal.r1 - 1) * 100,
         stop_desc=f"{signal.r3:,.0f}원(R3, 전일종가)",
         target_price=signal.r0,
+        target_pct=(signal.r0 / signal.r1 - 1) * 100,
         target_desc=f"{signal.r0:,.0f}원(R0, 상한가고가) — 도달 전 {signal.r2:,.0f}원(R2) 터치 시 추가매수",
     )

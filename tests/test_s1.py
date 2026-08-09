@@ -135,6 +135,8 @@ def test_describe_trade_plan_uses_fixed_r0_r3_grid():
     assert f"{sig.r1:,.0f}" in plan.entry_desc
     assert f"{sig.r3:,.0f}" in plan.stop_desc
     assert f"{sig.r0:,.0f}" in plan.target_desc
+    assert round(plan.stop_pct, 2) == round((sig.r3 / sig.r1 - 1) * 100, 2)
+    assert round(plan.target_pct, 2) == round((sig.r0 / sig.r1 - 1) * 100, 2)
 
 
 def test_addon_and_breakeven_partial():
