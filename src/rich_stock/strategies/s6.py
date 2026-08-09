@@ -38,7 +38,7 @@ import pandas as pd
 
 from rich_stock.config import S6Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
 
 
 @dataclass
@@ -244,4 +244,41 @@ def describe_trade_plan(df: pd.DataFrame, signal: S6Signal, config: S6Config) ->
             "1차만 보유 시: 매수가+5%부터 절반매도, 저점대비+17%에서 전량매도. "
             "2차매수 이후엔 1차매수가(15일선가)에서 전량청산."
         ),
+    )
+
+
+def plan_entry_order_s6(df: pd.DataFrame, signal: S6Signal, config: S6Config) -> EntryOrderPlan:
+    """15일선(당일 값)에 지정가 매수를 걸어둔다 — 이동평균은 매일 값이 바뀌므로 체결 전까지
+    매일 아침 새 값으로 재주문해야 한다(order_style="daily_recompute_limit")."""
+    ma_short = float(df["Close"].rolling(config.ma_short).mean().iloc[-1])
+    return EntryOrderPlan(order_style="daily_recompute_limit", limit_price=ma_short, entry_valid_trading_days=config.entry_valid_days)
+
+
+AUTO_TRADE_SAFETY_STOP_PCT = -0.15
+"""S6은 원문 설계상 가격 손절이 아예 없지만("존버"), 무인 자동매매에 그대로 넣으면 슬롯 하나가
+무기한 물려 나머지 슬롯의 기회비용만 커진다(2026-08-09 technical-analyst 분석 — force_idx가
+2차매수 없이는 아예 안 걸리는 구조가 PF 0.09의 주 원인이라는 게 밝혀짐). 정상적인 눌림목 변동
+범위에서는 거의 발동하지 않도록 넉넉하게(-15%) 잡아, "손절 없이 버티는 성질"을 최대한 그대로
+관찰하면서도 파국적 손실만 차단한다."""
+
+AUTO_TRADE_SAFETY_TARGET_PCT = 0.20
+"""같은 취지의 안전장치 익절(+20%) — 원문의 "저점대비+17%" 전량매도 규칙과 비슷한 크기로 잡았다."""
+
+AUTO_TRADE_SAFETY_MAX_HOLD_DAYS = 20
+"""안전장치 최대 보유 거래일수 — entry_valid_days(진입 유효기간)와는 별개로, 일단 체결된 뒤
+얼마나 오래 들고 있을 수 있는지의 상한이다. 넉넉하게 잡아 정상적인 단계별 청산 타이밍보다
+훨씬 늦게만 발동하게 한다."""
+
+
+def compute_bracket_s6(fill_price: float, signal: S6Signal, config: S6Config) -> Bracket:
+    """S6 안전장치 브라켓 — 원문에 없는 값이라 is_safety_override=True로 표시한다(사후 분석 시
+    "이 청산이 없었다면 어떻게 됐을지"를 구분해서 볼 수 있도록). 1단계 범위는 원문의 1차/2차/3차
+    단계별 청산(러닝로우 기반 부분매도 등)을 생략한 단순 브라켓이다."""
+    return Bracket(
+        stop_price=fill_price * (1 + AUTO_TRADE_SAFETY_STOP_PCT),
+        target_price=fill_price * (1 + AUTO_TRADE_SAFETY_TARGET_PCT),
+        max_hold_trading_days=AUTO_TRADE_SAFETY_MAX_HOLD_DAYS,
+        stop_reason=f"안전장치(원문에 없음): 매수가 대비 {AUTO_TRADE_SAFETY_STOP_PCT * 100:.0f}%",
+        target_reason=f"안전장치(원문 근사): 매수가 대비 +{AUTO_TRADE_SAFETY_TARGET_PCT * 100:.0f}%",
+        is_safety_override=True,
     )

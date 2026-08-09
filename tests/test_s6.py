@@ -3,10 +3,15 @@ import pytest
 
 from rich_stock.config import S6Config
 from rich_stock.strategies.s6 import (
+    AUTO_TRADE_SAFETY_MAX_HOLD_DAYS,
+    AUTO_TRADE_SAFETY_STOP_PCT,
+    AUTO_TRADE_SAFETY_TARGET_PCT,
     S6Signal,
     backtest_ticker,
+    compute_bracket_s6,
     describe_trade_plan,
     detect_s6_signals,
+    plan_entry_order_s6,
     simulate_s6_trade,
 )
 
@@ -63,6 +68,41 @@ def test_describe_trade_plan_uses_current_ma_and_has_no_stop_price():
     assert plan.stop_pct is None
     assert plan.target_pct is None
     assert "손절" in plan.stop_desc
+
+
+def test_plan_entry_order_s6_uses_current_ma_short_as_daily_recompute_limit():
+    opens = [5000, 5000, 5000, 6500, 8450, 15000, 14000] + [14000] * 23
+    highs = [5000, 5000, 6500, 8450, 10985, 16000, 14500] + [14100] * 23
+    lows = [4800, 4900, 5000, 6500, 8450, 14000, 13500] + [13900] * 23
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000] + [14000] * 23
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    sig = detect_s6_signals(df, S6Config())[0]
+    config = S6Config()
+
+    plan = plan_entry_order_s6(df, sig, config)
+
+    ma_short = df["Close"].rolling(config.ma_short).mean().iloc[-1]
+    assert plan.order_style == "daily_recompute_limit"
+    assert plan.limit_price == ma_short
+    assert plan.entry_valid_trading_days == config.entry_valid_days
+
+
+def test_compute_bracket_s6_is_safety_override_with_generous_margins():
+    opens = [5000, 5000, 5000, 6500, 8450, 15000, 14000] + [14000] * 23
+    highs = [5000, 5000, 6500, 8450, 10985, 16000, 14500] + [14100] * 23
+    lows = [4800, 4900, 5000, 6500, 8450, 14000, 13500] + [13900] * 23
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000] + [14000] * 23
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    sig = detect_s6_signals(df, S6Config())[0]
+
+    bracket = compute_bracket_s6(fill_price=10000, signal=sig, config=S6Config())
+
+    assert bracket.is_safety_override is True
+    assert bracket.stop_price == 10000 * (1 + AUTO_TRADE_SAFETY_STOP_PCT)
+    assert bracket.target_price == 10000 * (1 + AUTO_TRADE_SAFETY_TARGET_PCT)
+    assert bracket.max_hold_trading_days == AUTO_TRADE_SAFETY_MAX_HOLD_DAYS
+    assert "안전장치" in bracket.stop_reason
+    assert "안전장치" in bracket.target_reason
 
 
 def test_no_signal_when_streak_too_short():

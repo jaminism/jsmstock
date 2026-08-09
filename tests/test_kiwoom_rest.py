@@ -15,6 +15,7 @@ from rich_stock.broker.kiwoom_rest import (
     place_sell_order,
     query_deposit,
     query_holdings,
+    query_order_status,
 )
 
 
@@ -196,3 +197,61 @@ def test_orders_blocked_on_live_domain():
 
 def test_account_query_url_path_unchanged():
     assert ACCOUNT_TR_URL_PATH == "/api/dostk/acnt"
+
+
+# --- 주문 체결 확인(kt00009) ------------------------------------------------
+
+
+def test_query_order_status_parses_fully_filled_order():
+    # 스펙(kt00009)의 responseExample을 그대로 축약 — 주문수량==체결수량(전량체결)
+    response = {
+        "acnt_ord_cntr_prst_array": [
+            {
+                "ord_no": "0000050", "stk_cd": "A069500", "stk_nm": "KODEX 200",
+                "ord_qty": "0000000001", "ord_uv": "0000000000",
+                "cntr_qty": "0000000001", "cntr_uv": "0000004900",
+            }
+        ],
+        "return_code": 0, "return_msg": "조회가 완료되었습니다",
+    }
+    client = _make_client_with_mock_tr(response)
+
+    result = query_order_status(client, ticker="069500")
+
+    assert len(result) == 1
+    row = result[0]
+    assert row["주문번호"] == "0000050"
+    assert row["주문수량"] == 1
+    assert row["체결수량"] == 1
+    assert row["체결단가"] == 4900
+    assert row["미체결수량"] == 0
+    assert row["전량체결"] is True
+    client.request_tr.assert_called_once_with(
+        "kt00009",
+        {"ord_dt": "", "stk_bond_tp": "0", "mrkt_tp": "0", "sell_tp": "0", "qry_tp": "0",
+         "stk_cd": "069500", "fr_ord_no": "", "dmst_stex_tp": "KRX"},
+    )
+
+
+def test_query_order_status_detects_partial_fill():
+    response = {
+        "acnt_ord_cntr_prst_array": [
+            {"ord_no": "0000051", "stk_cd": "A005930", "stk_nm": "삼성전자",
+             "ord_qty": "0000000010", "cntr_qty": "0000000003", "cntr_uv": "0000070000"}
+        ],
+        "return_code": 0, "return_msg": "조회가 완료되었습니다",
+    }
+    client = _make_client_with_mock_tr(response)
+
+    row = query_order_status(client)[0]
+
+    assert row["주문수량"] == 10
+    assert row["체결수량"] == 3
+    assert row["미체결수량"] == 7
+    assert row["전량체결"] is False
+
+
+def test_query_order_status_empty_list_when_no_orders():
+    response = {"acnt_ord_cntr_prst_array": [], "return_code": 0, "return_msg": "조회완료"}
+    client = _make_client_with_mock_tr(response)
+    assert query_order_status(client) == []

@@ -34,7 +34,7 @@ import pandas as pd
 
 from rich_stock.config import S3Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
 
 
 @dataclass
@@ -147,4 +147,20 @@ def describe_trade_plan(df: pd.DataFrame, signal: S3Signal, config: S3Config) ->
         target_price=signal.high,
         target_pct=(signal.high / signal.s3_level - 1) * 100,
         target_desc=f"{signal.high:,.0f}원(전고점)",
+    )
+
+
+def plan_entry_order_s3(signal: S3Signal, config: S3Config) -> EntryOrderPlan:
+    """S3선에 지정가 매수를 걸어두면 거래소가 터치 시 체결해준다 — entry_valid_days(기본 7일)
+    동안 매일 같은 가격으로 재주문해야 한다(KRX 지정가는 당일만 유효)."""
+    return EntryOrderPlan(order_style="fixed_limit", limit_price=signal.s3_level, entry_valid_trading_days=config.entry_valid_days)
+
+
+def compute_bracket_s3(fill_price: float, signal: S3Signal, config: S3Config) -> Bracket:
+    """실제 체결가 기준 -7% 손절, 전고점 익절 — simulate_s3_trade와 동일 규칙(S3는 장중 터치라
+    fill_price는 이론상 signal.s3_level과 같지만, 실거래 슬리피지를 감안해 실제 체결가를 쓴다)."""
+    stop_price = fill_price * (1 + config.stop_loss_pct)
+    return Bracket(
+        stop_price=stop_price, target_price=signal.high, max_hold_trading_days=config.hold_days,
+        stop_reason=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%", target_reason="전고점(RH)",
     )

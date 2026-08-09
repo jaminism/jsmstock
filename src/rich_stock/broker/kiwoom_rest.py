@@ -174,6 +174,48 @@ def query_holdings(client: KiwoomRestClient) -> list[dict]:
     return holdings
 
 
+def query_order_status(
+    client: KiwoomRestClient, order_date: str | None = None, ticker: str | None = None, from_order_no: str | None = None
+) -> list[dict]:
+    """kt00009(계좌별주문체결현황요청) — 당일 주문/체결 현황. 주문 제출 응답(ord_no)만으로는
+    실제 체결 여부/수량/가격을 알 수 없어서(place_buy_order 등은 접수 응답만 반환), 자동매매가
+    "진짜 체결됐는지"를 확인하려면 이 함수로 재조회해야 한다.
+
+    order_date를 생략하면 당일 전체, ticker/from_order_no로 좁혀서 조회할 수 있다(from_order_no는
+    "그 번호부터 이후"라 정확히 그 주문 하나만 보려면 반환된 리스트에서 "주문번호"로 다시 필터링
+    할 것). 종목당 여러 주문이 있으면 여러 행이 반환된다.
+    """
+    body = {
+        "ord_dt": order_date or "",
+        "stk_bond_tp": "0",
+        "mrkt_tp": "0",
+        "sell_tp": "0",
+        "qry_tp": "0",
+        "stk_cd": ticker or "",
+        "fr_ord_no": from_order_no or "",
+        "dmst_stex_tp": "KRX",
+    }
+    data = client.request_tr("kt00009", body)
+    results = []
+    for row in data.get("acnt_ord_cntr_prst_array", []):
+        ord_qty = _parse_amount(row.get("ord_qty"))
+        cntr_qty = _parse_amount(row.get("cntr_qty"))
+        results.append(
+            {
+                "주문번호": row.get("ord_no"),
+                "종목코드": row.get("stk_cd"),
+                "종목명": row.get("stk_nm"),
+                "주문수량": ord_qty,
+                "체결수량": cntr_qty,
+                "체결단가": _parse_amount(row.get("cntr_uv")),
+                "미체결수량": max(ord_qty - cntr_qty, 0),
+                "전량체결": ord_qty > 0 and cntr_qty >= ord_qty,
+                "_raw": row,
+            }
+        )
+    return results
+
+
 # --- 주문(매수/매도/취소) -------------------------------------------------
 #
 # 2026-08-09 사용자와 합의한 범위: 모의투자 계좌에서만, 사람이 종목/수량/가격을 직접 지정해

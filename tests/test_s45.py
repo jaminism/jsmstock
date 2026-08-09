@@ -4,9 +4,13 @@ from rich_stock.config import S4Config, S5Config
 from rich_stock.strategies.s45 import (
     backtest_ticker_s4,
     backtest_ticker_s5,
+    compute_bracket_s4,
+    compute_bracket_s5,
     describe_trade_plan_s4,
     describe_trade_plan_s5,
     detect_s45_signals,
+    plan_entry_order_s4,
+    plan_entry_order_s5,
 )
 
 
@@ -54,6 +58,37 @@ def test_describe_trade_plan_s4_entry_unknown_target_fixed():
     assert round(plan.target_pct, 2) == round((sig.high / level - 1) * 100, 2)
 
 
+def test_plan_entry_order_s4_is_close_bet():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S4Config())[0]
+
+    plan = plan_entry_order_s4(sig, S4Config())
+
+    assert plan.order_style == "close_bet"
+    assert plan.limit_price is None
+    assert plan.entry_valid_trading_days == S4Config().entry_valid_days
+
+
+def test_compute_bracket_s4_stop_relative_to_fill_price():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S4Config())[0]
+    config = S4Config()
+
+    bracket = compute_bracket_s4(fill_price=11400, signal=sig, config=config)
+
+    assert bracket.stop_price == 11400 * (1 + config.stop_loss_pct)
+    assert bracket.target_price == sig.high
+    assert bracket.is_safety_override is False
+
+
 def test_describe_trade_plan_s5_entry_stop_target_all_fixed():
     opens = [10000, 10200, 11550, 11500, 11450]
     highs = [10000, 11600, 11650, 11600, 11550]
@@ -71,6 +106,39 @@ def test_describe_trade_plan_s5_entry_stop_target_all_fixed():
     assert plan.stop_pct == config.stop_loss_pct * 100
     assert plan.target_price == level * (1 + config.profit_target_pct)
     assert plan.target_pct == config.profit_target_pct * 100
+
+
+def test_plan_entry_order_s5_fixed_limit_at_level():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S5Config())[0]
+    config = S5Config()
+
+    plan = plan_entry_order_s5(sig, config)
+
+    level = sig.high - (sig.high - sig.low) * config.fib_ratio
+    assert plan.order_style == "fixed_limit"
+    assert plan.limit_price == level
+    assert plan.entry_valid_trading_days == config.entry_valid_days
+
+
+def test_compute_bracket_s5_uses_fill_price_for_both_stop_and_target():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S5Config())[0]
+    config = S5Config()
+
+    bracket = compute_bracket_s5(fill_price=11000, signal=sig, config=config)
+
+    assert bracket.stop_price == 11000 * (1 + config.stop_loss_pct)
+    assert bracket.target_price == 11000 * (1 + config.profit_target_pct)
+    assert bracket.is_safety_override is False
 
 
 def test_no_power_candle_when_shape_condition_fails():

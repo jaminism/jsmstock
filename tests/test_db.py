@@ -18,7 +18,7 @@ def conn(tmp_path):
 
 def test_connect_creates_schema(conn):
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
-    assert {"runs", "signals", "trades", "decisions"} <= tables
+    assert {"runs", "signals", "trades", "decisions", "auto_positions"} <= tables
 
 
 def test_save_run_persists_params_as_json(conn):
@@ -224,3 +224,172 @@ def test_find_open_decision_returns_none_when_no_open_position(conn):
 
     assert db.find_open_decision(conn, "005930") is None
     assert db.find_open_decision(conn, "999999") is None
+
+
+# --- auto_positions (자동매매 진행중 포지션 상태) --------------------------
+
+
+def test_create_pending_position_status_and_fields(conn):
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S5", signal_date="2026-08-01",
+        order_style="fixed_limit", entry_order_no="000123", entry_valid_until_trading_day=4,
+    )
+    row = conn.execute(
+        "SELECT ticker, technique, status, order_style, entry_order_no, entry_valid_until_trading_day "
+        "FROM auto_positions WHERE position_id = ?", [position_id],
+    ).fetchone()
+    assert row == ("005930", "S5", "pending_entry", "fixed_limit", "000123", 4)
+
+
+def test_update_pending_entry_order_replaces_order_no(conn):
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S6", signal_date="2026-08-01",
+        order_style="daily_recompute_limit", entry_order_no="000001",
+    )
+    db.update_pending_entry_order(conn, position_id, "000002")
+    row = conn.execute("SELECT entry_order_no FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row[0] == "000002"
+
+
+def test_confirm_position_fill_creates_decision_and_updates_position(conn):
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit",
+    )
+    decision_id = db.confirm_position_fill(
+        conn, position_id, fill_price=70000, fill_quantity=10,
+        stop_price=65100, target_price=74900, max_hold_trading_days=4, fill_date="2026-08-02",
+    )
+
+    decision_row = conn.execute(
+        "SELECT ticker, technique, buy_price, quantity, status FROM decisions WHERE decision_id = ?", [decision_id]
+    ).fetchone()
+    assert decision_row == ("005930", "S5", 70000, 10, "open")
+
+    pos_row = conn.execute(
+        "SELECT decision_id, status, fill_price, stop_price, target_price, max_hold_trading_days, is_safety_override "
+        "FROM auto_positions WHERE position_id = ?", [position_id],
+    ).fetchone()
+    assert pos_row == (decision_id, "open", 70000, 65100, 74900, 4, False)
+
+
+def test_confirm_position_fill_raises_for_unknown_position(conn):
+    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+        db.confirm_position_fill(conn, "pos_nonexistent", fill_price=1000, fill_quantity=1,
+                                  stop_price=None, target_price=None, max_hold_trading_days=None)
+
+
+def test_close_position_closes_linked_decision(conn):
+    position_id = db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, position_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+
+    db.close_position(conn, position_id, exit_order_no="000456", exit_reason="exit_target", sell_price=74900)
+
+    pos_row = conn.execute("SELECT status, exit_order_no, exit_reason FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert pos_row == ("closed", "000456", "exit_target")
+    decision_row = conn.execute("SELECT status, sell_price FROM decisions WHERE ticker = '005930'").fetchone()
+    assert decision_row == ("closed", 74900)
+
+
+def test_expire_position_sets_status_without_decision(conn):
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    db.expire_position(conn, position_id, note="entry_valid_days 초과")
+
+    row = conn.execute("SELECT status, note, decision_id FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row == ("expired", "entry_valid_days 초과", None)
+
+
+def test_mark_position_error_sets_status_and_note(conn):
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    db.mark_position_error(conn, position_id, "브로커 잔고와 불일치")
+
+    row = conn.execute("SELECT status, note FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row == ("error", "브로커 잔고와 불일치")
+
+
+def test_touch_position_updates_last_price_without_status_change(conn):
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    db.touch_position(conn, position_id, last_price=71000)
+
+    row = conn.execute("SELECT status, last_price, last_checked_at FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row[0] == "pending_entry"
+    assert row[1] == 71000
+    assert row[2] is not None
+
+
+def test_increment_trading_days_held_only_affects_open_positions(conn):
+    open_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, open_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    pending_id = db.create_pending_position(conn, "000660", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+
+    db.increment_trading_days_held(conn)
+    db.increment_trading_days_held(conn)
+
+    open_row = conn.execute("SELECT trading_days_held FROM auto_positions WHERE position_id = ?", [open_id]).fetchone()
+    pending_row = conn.execute("SELECT trading_days_held FROM auto_positions WHERE position_id = ?", [pending_id]).fetchone()
+    assert open_row[0] == 2
+    assert pending_row[0] == 0
+
+
+def test_decrement_pending_entry_validity_expires_at_zero(conn):
+    expiring_soon = db.create_pending_position(
+        conn, "005930", technique="S2", signal_date="2026-08-01",
+        order_style="close_bet", entry_valid_until_trading_day=1,
+    )
+    still_valid = db.create_pending_position(
+        conn, "000660", technique="S3", signal_date="2026-08-01",
+        order_style="fixed_limit", entry_valid_until_trading_day=7,
+    )
+    no_tracking = db.create_pending_position(
+        conn, "035420", technique="S6", signal_date="2026-08-01", order_style="daily_recompute_limit",
+    )
+
+    expired_ids = db.decrement_pending_entry_validity(conn)
+
+    assert expired_ids == [expiring_soon]
+    still_valid_row = conn.execute(
+        "SELECT entry_valid_until_trading_day FROM auto_positions WHERE position_id = ?", [still_valid]
+    ).fetchone()
+    assert still_valid_row[0] == 6
+    no_tracking_row = conn.execute(
+        "SELECT entry_valid_until_trading_day FROM auto_positions WHERE position_id = ?", [no_tracking]
+    ).fetchone()
+    assert no_tracking_row[0] is None
+
+
+def test_get_pending_positions_and_get_open_positions(conn):
+    pending_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    open_id = db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, open_id, fill_price=50000, fill_quantity=5,
+                              stop_price=46500, target_price=53500, max_hold_trading_days=4)
+
+    pending = db.get_pending_positions(conn)
+    open_ = db.get_open_positions(conn)
+
+    assert [p["position_id"] for p in pending] == [pending_id]
+    assert [p["position_id"] for p in open_] == [open_id]
+    assert open_[0]["stop_price"] == 46500
+
+
+def test_held_tickers_combines_auto_and_manual(conn):
+    db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    open_id = db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, open_id, fill_price=50000, fill_quantity=5,
+                              stop_price=46500, target_price=53500, max_hold_trading_days=4)
+    db.record_buy(conn, "035420", buy_price=200000)  # 수동매매로 보유중
+
+    assert db.held_tickers(conn) == {"005930", "000660", "035420"}
+
+
+def test_count_open_positions_counts_decisions_open_status(conn):
+    assert db.count_open_positions(conn) == 0
+
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    assert db.count_open_positions(conn) == 0  # pending_entry는 미체결이라 카운트 안 됨
+
+    db.confirm_position_fill(conn, position_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    db.record_buy(conn, "035420", buy_price=200000)  # 수동매매도 슬롯 공유
+
+    assert db.count_open_positions(conn) == 2

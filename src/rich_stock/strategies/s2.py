@@ -29,7 +29,7 @@ import pandas as pd
 
 from rich_stock.config import S2Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
 
 
 @dataclass
@@ -146,4 +146,19 @@ def describe_trade_plan(df: pd.DataFrame, signal: S2Signal, config: S2Config) ->
         target_price=signal.high,
         target_pct=approx_target_pct,
         target_desc=f"{signal.high:,.0f}원(전고점)",
+    )
+
+
+def plan_entry_order_s2(signal: S2Signal, config: S2Config) -> EntryOrderPlan:
+    """종가베팅 — 그날 종가가 S2선 이하로 마감해야 매수되므로 사전에 지정가를 걸 수 없다.
+    자동매매는 15:20 이후 장마감 임박 폴링으로 조건을 판단해 시장가로 매수한다."""
+    return EntryOrderPlan(order_style="close_bet", limit_price=None, entry_valid_trading_days=config.entry_valid_days)
+
+
+def compute_bracket_s2(fill_price: float, signal: S2Signal, config: S2Config) -> Bracket:
+    """실제 체결가(그날 종가) 기준 -7% 손절, 전고점 익절 — simulate_s2_trade와 동일 규칙."""
+    stop_price = fill_price * (1 + config.stop_loss_pct)
+    return Bracket(
+        stop_price=stop_price, target_price=signal.high, max_hold_trading_days=config.hold_days,
+        stop_reason=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%", target_reason="전고점(RH)",
     )
