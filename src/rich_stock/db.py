@@ -532,7 +532,7 @@ def decrement_pending_entry_validity(conn: duckdb.DuckDBPyConnection) -> list[st
 def get_pending_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [
         "position_id", "ticker", "technique", "signal_date", "order_style",
-        "entry_order_no", "entry_valid_until_trading_day",
+        "entry_order_no", "entry_valid_until_trading_day", "updated_at",
     ]
     rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'pending_entry'").fetchall()
     return [dict(zip(cols, row)) for row in rows]
@@ -542,6 +542,7 @@ def get_open_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [
         "position_id", "decision_id", "ticker", "technique", "fill_price", "fill_quantity",
         "stop_price", "target_price", "max_hold_trading_days", "trading_days_held", "is_safety_override",
+        "last_price",
     ]
     rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'open'").fetchall()
     return [dict(zip(cols, row)) for row in rows]
