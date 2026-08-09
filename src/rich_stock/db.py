@@ -139,6 +139,21 @@ def _signal_row(technique: str, ticker: str, sig: Any) -> dict:
     raise ValueError(f"unknown technique: {technique}")
 
 
+def last_livescan_date(conn: duckdb.DuckDBPyConnection, technique: str) -> pd.Timestamp | None:
+    """해당 기법의 가장 최근 라이브 스캔 기준일(end_date)을 반환한다. 스캔 이력이 없으면 None.
+
+    라이브 스캔 스크립트가 매번 전체 히스토리를 처음부터 재계산하는 대신, 이 날짜 이전은 이미
+    스캔했다고 보고 그 부근부터만(기법별 lookback 여유를 두고) 다시 훑도록 증분 스캔의 기준점으로
+    쓴다. 신규 종목처럼 아직 한 번도 스캔되지 않은 기법이면 None을 반환해 호출자가 전체 스캔으로
+    폴백하게 한다.
+    """
+    row = conn.execute(
+        "SELECT MAX(end_date) FROM runs WHERE technique = ? AND run_id LIKE 'livescan_%'",
+        [technique],
+    ).fetchone()
+    return pd.Timestamp(row[0]) if row and row[0] is not None else None
+
+
 def existing_livescan_signal_dates(conn: duckdb.DuckDBPyConnection, technique: str) -> set[tuple[str, pd.Timestamp]]:
     """이미 라이브 스캔(run_id가 'livescan_'으로 시작)으로 저장된 (ticker, event_date) 조합.
 

@@ -75,6 +75,23 @@ def test_save_signals_for_sp(conn):
     assert '"streak_len": 3' in row[5]
 
 
+def test_last_livescan_date_returns_none_when_no_runs(conn):
+    assert db.last_livescan_date(conn, "S3") is None
+
+
+def test_last_livescan_date_ignores_non_livescan_runs(conn):
+    db.save_run(conn, "backtest_research_run", "S3", "2021-01-01", "2021-12-31", S3Config())
+    assert db.last_livescan_date(conn, "S3") is None
+
+
+def test_last_livescan_date_returns_latest_end_date_for_technique(conn):
+    db.save_run(conn, "livescan_s3_2026-08-05_120000", "S3", "2026-07-06", "2026-08-05", S3Config())
+    db.save_run(conn, "livescan_s3_2026-08-08_120000", "S3", "2026-07-09", "2026-08-08", S3Config())
+    db.save_run(conn, "livescan_s2_2026-08-09_120000", "S2", "2026-07-10", "2026-08-09", S3Config())
+
+    assert db.last_livescan_date(conn, "S3") == pd.Timestamp("2026-08-08")
+
+
 def test_existing_livescan_signal_dates_excludes_non_livescan_runs(conn):
     sig = S3Signal(ul_index=1, ul_date=pd.Timestamp("2024-01-03"), high=13000.0, low=9800.0, s3_level=11400.0)
     db.save_signals(conn, "livescan_s3_2024-01-04_120000", "S3", "005930", [sig])
