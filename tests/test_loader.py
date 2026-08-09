@@ -94,3 +94,94 @@ def test_universe_default_still_uses_cache(tmp_path):
     result = load_universe_ohlcv(["TEST"], "2021-01-01", "2024-12-31", cache_dir=cache_dir)
     assert "TEST" in result
     assert not result["TEST"].empty
+
+
+class _RecordingFDR(types.ModuleType):
+    """실제 네트워크 대신 호출 인자를 기록하고 지정된 구간의 새 봉만 돌려주는 가짜 FinanceDataReader."""
+
+    def __init__(self, name, new_price=2000):
+        super().__init__(name)
+        self.calls = []
+        self._new_price = new_price
+
+    def DataReader(self, ticker, start, end):  # noqa: N802 - 원본 API 이름을 맞춤
+        start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+        self.calls.append((ticker, start_ts, end_ts))
+        dates = pd.bdate_range(start_ts, end_ts)
+        if len(dates) == 0:
+            return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+        return pd.DataFrame(
+            {"Open": self._new_price, "High": self._new_price, "Low": self._new_price,
+             "Close": self._new_price, "Volume": 500},
+            index=dates,
+        )
+
+
+def test_force_refresh_requests_only_recent_range_when_cache_exists(tmp_path, monkeypatch):
+    # 캐시가 이미 start~(거의)end를 커버하면, force_refresh=True라도 원래 start(2021년)부터가
+    # 아니라 캐시 마지막 거래일 부근부터만 다시 받아야 한다(전종목 재다운로드 방지가 핵심 목적).
+    cache_dir = tmp_path / "ohlcv"
+    cache_dir.mkdir()
+    cached = _make_cached_df("2021-01-01", "2024-12-20")
+    cached.to_parquet(cache_dir / "TEST.parquet")
+
+    fake_fdr = _RecordingFDR("FinanceDataReader")
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", fake_fdr)
+
+    result = load_ohlcv("TEST", "2021-01-01", "2024-12-31", cache_dir=cache_dir, force_refresh=True)
+
+    assert len(fake_fdr.calls) == 1
+    requested_start = fake_fdr.calls[0][1]
+    assert requested_start > pd.Timestamp("2024-12-01")  # 2021년부터가 아니라 캐시 마지막일 근처부터
+    assert not result.empty
+
+
+def test_force_refresh_merges_new_data_and_keeps_old_untouched(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "ohlcv"
+    cache_dir.mkdir()
+    cached = _make_cached_df("2021-01-01", "2024-12-20")
+    cached.to_parquet(cache_dir / "TEST.parquet")
+
+    fake_fdr = _RecordingFDR("FinanceDataReader", new_price=2000)
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", fake_fdr)
+
+    result = load_ohlcv("TEST", "2021-01-01", "2024-12-31", cache_dir=cache_dir, force_refresh=True)
+
+    # 기존 캐시(가격 1000)의 오래된 구간은 그대로 남아있어야 한다.
+    assert result.loc["2021-01-04", "Close"] == 1000
+    # 새로 받은(가격 2000) 구간이 실제로 병합돼 마지막 날짜까지 확장돼야 한다.
+    assert result.index.max() >= pd.Timestamp("2024-12-30")
+    assert result.loc[result.index.max(), "Close"] == 2000
+    # 병합 경계에서 PrevClose가 NaN 없이 이어져야 한다(구간별 개별 계산이 아니라 병합 후 재계산).
+    assert not result["PrevClose"].iloc[1:].isna().any()
+
+
+def test_force_refresh_persists_merged_result_to_cache(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "ohlcv"
+    cache_dir.mkdir()
+    cached = _make_cached_df("2021-01-01", "2024-12-20")
+    cached.to_parquet(cache_dir / "TEST.parquet")
+
+    fake_fdr = _RecordingFDR("FinanceDataReader", new_price=2000)
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", fake_fdr)
+
+    load_ohlcv("TEST", "2021-01-01", "2024-12-31", cache_dir=cache_dir, force_refresh=True)
+
+    on_disk = pd.read_parquet(cache_dir / "TEST.parquet")
+    assert on_disk.index.max() >= pd.Timestamp("2024-12-30")
+    assert on_disk.loc["2021-01-04", "Close"] == 1000
+
+
+def test_force_refresh_falls_back_to_full_fetch_when_no_cache(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "ohlcv"
+    cache_dir.mkdir()
+
+    fake_fdr = _RecordingFDR("FinanceDataReader", new_price=2000)
+    monkeypatch.setitem(sys.modules, "FinanceDataReader", fake_fdr)
+
+    result = load_ohlcv("TEST", "2024-12-01", "2024-12-31", cache_dir=cache_dir, force_refresh=True)
+
+    assert len(fake_fdr.calls) == 1
+    requested_start = fake_fdr.calls[0][1]
+    assert requested_start <= pd.Timestamp("2024-12-01")  # 캐시가 없으니 요청 시작일부터 전체 조회
+    assert not result.empty
