@@ -115,8 +115,10 @@ def test_describe_trade_plan_entry_unknown_until_close_but_target_fixed():
 
     assert plan.entry_price is None  # 종가베팅이라 장마감 전까지 확정 안 됨
     assert plan.stop_price is None
+    assert plan.stop_pct == S2Config().stop_loss_pct * 100  # 비율은 진입가와 무관하게 확정값
     assert f"{sig.s2_level:,.0f}" in plan.entry_desc
     assert plan.target_price == sig.high
+    assert round(plan.target_pct, 2) == round((sig.high / sig.s2_level - 1) * 100, 2)
     assert f"{sig.high:,.0f}" in plan.target_desc
 
 

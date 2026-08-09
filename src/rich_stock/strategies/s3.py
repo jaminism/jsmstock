@@ -142,7 +142,9 @@ def describe_trade_plan(df: pd.DataFrame, signal: S3Signal, config: S3Config) ->
         entry_price=signal.s3_level,
         entry_desc=f"{signal.s3_level:,.0f}원(S3선) 터치 시 매수",
         stop_price=stop_price,
+        stop_pct=config.stop_loss_pct * 100,
         stop_desc=f"{stop_price:,.0f}원(매수가 대비 {config.stop_loss_pct * 100:.0f}%)",
         target_price=signal.high,
+        target_pct=(signal.high / signal.s3_level - 1) * 100,
         target_desc=f"{signal.high:,.0f}원(전고점)",
     )

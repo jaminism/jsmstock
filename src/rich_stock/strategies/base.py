@@ -75,11 +75,19 @@ class TradePlan:
     S2/S4처럼 "종가가 어떤 레벨 아래로 마감하면 그 종가에 매수"하는 기법은 장 마감 전까지
     정확한 체결가를 알 수 없어 None(조건은 entry_desc에 설명). S6은 원문 설계상 가격 손절이
     아예 없어 stop_price/stop_desc가 "손절 없음"을 뜻하는 값이 된다.
+
+    stop_pct/target_pct는 매수가 대비 손절/익절 수익률(%)이다 — 절대가격(stop_price 등)이
+    None이어도(종가베팅이라 진입가 미확정) 비율 자체는 알 수 있는 경우가 있어(예: S2/S4는
+    "매수가 대비 -7%"가 config.stop_loss_pct로 고정) 따로 둔다. 익절%은 진입가가 미확정인
+    기법(S2/S4)은 되돌림선 레벨을 진입가의 근사치로 써서 계산한 근사값이다(실제 체결가는 그날
+    종가라 레벨과 정확히 같지 않음) — 정확한 값이 아니라 참고용임을 호출부에서 감안할 것.
     """
 
     entry_price: float | None
     entry_desc: str
     stop_price: float | None
+    stop_pct: float | None
     stop_desc: str
     target_price: float | None
+    target_pct: float | None
     target_desc: str

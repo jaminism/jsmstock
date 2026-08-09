@@ -46,7 +46,9 @@ def test_describe_trade_plan_entry_and_stop_are_fixed_values():
 
     assert plan.entry_price == sig.s3_level
     assert plan.stop_price == sig.s3_level * (1 + S3Config().stop_loss_pct)
+    assert plan.stop_pct == S3Config().stop_loss_pct * 100
     assert plan.target_price == sig.high
+    assert round(plan.target_pct, 2) == round((sig.high / sig.s3_level - 1) * 100, 2)
 
 
 def _scenario_df(day4_close, day4_low, day4_high):

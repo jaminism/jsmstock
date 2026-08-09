@@ -60,6 +60,8 @@ def test_describe_trade_plan_uses_current_ma_and_has_no_stop_price():
     assert f"{ma_short:,.0f}" in plan.entry_desc
     assert f"{ma_long:,.0f}" in plan.entry_desc
     assert plan.stop_price is None
+    assert plan.stop_pct is None
+    assert plan.target_pct is None
     assert "손절" in plan.stop_desc
 
 
