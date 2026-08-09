@@ -27,6 +27,9 @@ from pathlib import Path
 import requests
 
 ACCOUNT_TR_URL_PATH = "/api/dostk/acnt"
+ORDER_TR_URL_PATH = "/api/dostk/ordr"
+"""주문(매수/매도/정정/취소) TR은 계좌조회(acnt)와 별개 엔드포인트를 쓴다(kiwoom-rest-api-spec.json
+확인) — request_tr()의 url_path 인자로 넘긴다."""
 
 MOCK_BASE_URL = "https://mockapi.kiwoom.com"
 LIVE_BASE_URL = "https://api.kiwoom.com"
@@ -104,11 +107,14 @@ class KiwoomRestClient:
 
     # --- TR 요청 공용 -----------------------------------------------------
 
-    def request_tr(self, api_id: str, body: dict, cont_yn: str = "N", next_key: str = "") -> dict:
-        """계좌 관련 TR 공용 호출. 응답 JSON을 그대로 반환한다(return_code!=0이면 예외 발생).
+    def request_tr(
+        self, api_id: str, body: dict, cont_yn: str = "N", next_key: str = "", url_path: str = ACCOUNT_TR_URL_PATH
+    ) -> dict:
+        """TR 공용 호출. 응답 JSON을 그대로 반환한다(return_code!=0이면 예외 발생).
 
         cont_yn/next_key는 연속조회(페이지네이션)용 — 응답 헤더의 값을 다음 호출에 그대로 넘기면
-        이어서 조회된다. 첫 호출은 기본값(N, 빈 문자열)이면 된다.
+        이어서 조회된다. 첫 호출은 기본값(N, 빈 문자열)이면 된다. url_path는 계좌조회(기본값,
+        ACCOUNT_TR_URL_PATH)와 주문(ORDER_TR_URL_PATH)이 서로 다른 엔드포인트를 쓰기 때문에 뒀다.
         """
         headers = {
             **self.auth_headers(),
@@ -116,7 +122,7 @@ class KiwoomRestClient:
             "cont-yn": cont_yn,
             "next-key": next_key,
         }
-        resp = requests.post(f"{self.base_url}{ACCOUNT_TR_URL_PATH}", headers=headers, json=body, timeout=10)
+        resp = requests.post(f"{self.base_url}{url_path}", headers=headers, json=body, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if data.get("return_code", 0) != 0:
@@ -166,3 +172,75 @@ def query_holdings(client: KiwoomRestClient) -> list[dict]:
             }
         )
     return holdings
+
+
+# --- 주문(매수/매도/취소) -------------------------------------------------
+#
+# 2026-08-09 사용자와 합의한 범위: 모의투자 계좌에서만, 사람이 종목/수량/가격을 직접 지정해
+# CLI로 주문 1건씩 보낸다(daily_watchlist 신호를 자동으로 주문까지 연결하는 자동매매는 이번
+# 범위 밖). kiwoom-rest-api-spec.json의 kt10000(매수)/kt10001(매도)/kt10003(취소) 스펙을 그대로
+# 따른다 — 정정(kt10002)은 이번 범위에서 빠짐(필요해지면 같은 패턴으로 추가).
+
+ORDER_TYPE_LIMIT = "0"
+"""매매구분 코드 "0" = 보통(지정가). price를 지정하면 이 방식으로 주문한다."""
+
+ORDER_TYPE_MARKET = "3"
+"""매매구분 코드 "3" = 시장가. price를 안 넘기면(None) 이 방식으로 주문한다."""
+
+
+class LiveTradingBlockedError(RuntimeError):
+    """실서버(모의투자 아님) 도메인으로 주문을 보내려는 시도를 막는 안전장치가 발동했을 때."""
+
+
+def _require_mock_account(client: KiwoomRestClient) -> None:
+    if client.base_url != MOCK_BASE_URL:
+        raise LiveTradingBlockedError(
+            f"실서버({client.base_url})로는 주문을 보낼 수 없습니다 — 현재는 모의투자만 허용됩니다"
+            f"(2026-08-09 사용자 합의 범위). 실거래가 필요해지면 이 안전장치를 의도적으로 풀어야 함."
+        )
+
+
+def place_buy_order(client: KiwoomRestClient, ticker: str, quantity: int, price: int | None = None) -> dict:
+    """kt10000(주식 매수주문). price를 안 넘기면 시장가, 넘기면 그 가격의 지정가로 주문한다.
+
+    모의투자 계좌(client.base_url == MOCK_BASE_URL)에서만 허용 — 아니면 LiveTradingBlockedError.
+    """
+    _require_mock_account(client)
+    body = {
+        "dmst_stex_tp": "KRX",
+        "stk_cd": ticker,
+        "ord_qty": str(quantity),
+        "ord_uv": "" if price is None else str(price),
+        "trde_tp": ORDER_TYPE_MARKET if price is None else ORDER_TYPE_LIMIT,
+        "cond_uv": "",
+    }
+    data = client.request_tr("kt10000", body, url_path=ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "메시지": data.get("return_msg"), "_raw": data}
+
+
+def place_sell_order(client: KiwoomRestClient, ticker: str, quantity: int, price: int | None = None) -> dict:
+    """kt10001(주식 매도주문). place_buy_order와 동일 규칙(가격 미지정 시 시장가)."""
+    _require_mock_account(client)
+    body = {
+        "dmst_stex_tp": "KRX",
+        "stk_cd": ticker,
+        "ord_qty": str(quantity),
+        "ord_uv": "" if price is None else str(price),
+        "trde_tp": ORDER_TYPE_MARKET if price is None else ORDER_TYPE_LIMIT,
+        "cond_uv": "",
+    }
+    data = client.request_tr("kt10001", body, url_path=ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "메시지": data.get("return_msg"), "_raw": data}
+
+
+def cancel_order(client: KiwoomRestClient, ticker: str, orig_order_no: str, quantity: int = 0) -> dict:
+    """kt10003(주식 취소주문). quantity=0(기본값)이면 해당 주문의 잔량 전부를 취소한다."""
+    _require_mock_account(client)
+    body = {
+        "dmst_stex_tp": "KRX",
+        "orig_ord_no": orig_order_no,
+        "stk_cd": ticker,
+        "cncl_qty": str(quantity),
+    }
+    data = client.request_tr("kt10003", body, url_path=ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "원주문번호": data.get("base_orig_ord_no"), "메시지": data.get("return_msg"), "_raw": data}
