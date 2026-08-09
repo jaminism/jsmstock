@@ -4,6 +4,8 @@ from rich_stock.config import S4Config, S5Config
 from rich_stock.strategies.s45 import (
     backtest_ticker_s4,
     backtest_ticker_s5,
+    describe_trade_plan_s4,
+    describe_trade_plan_s5,
     detect_s45_signals,
 )
 
@@ -32,6 +34,39 @@ def test_detect_power_candle_via_shape_condition():
     assert len(signals) == 1
     assert signals[0].event_index == 1
     assert signals[0].high == 11600
+
+
+def test_describe_trade_plan_s4_entry_unknown_target_fixed():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S4Config())[0]
+
+    plan = describe_trade_plan_s4(df, sig, S4Config())
+
+    level = sig.high - (sig.high - sig.low) * S4Config().fib_ratio
+    assert plan.entry_price is None  # 종가베팅이라 장마감 전까지 확정 안 됨
+    assert f"{level:,.0f}" in plan.entry_desc
+    assert plan.target_price == sig.high
+
+
+def test_describe_trade_plan_s5_entry_stop_target_all_fixed():
+    opens = [10000, 10200, 11550, 11500, 11450]
+    highs = [10000, 11600, 11650, 11600, 11550]
+    lows = [10000, 9900, 11400, 11350, 11300]
+    closes = [10000, 11550, 11600, 11550, 11500]
+    df = make_df(opens, highs, lows, closes)
+    sig = detect_s45_signals(df, S5Config())[0]
+    config = S5Config()
+
+    plan = describe_trade_plan_s5(df, sig, config)
+
+    level = sig.high - (sig.high - sig.low) * config.fib_ratio
+    assert plan.entry_price == level
+    assert plan.stop_price == level * (1 + config.stop_loss_pct)
+    assert plan.target_price == level * (1 + config.profit_target_pct)
 
 
 def test_no_power_candle_when_shape_condition_fails():

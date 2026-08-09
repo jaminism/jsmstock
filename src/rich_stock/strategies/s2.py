@@ -29,7 +29,7 @@ import pandas as pd
 
 from rich_stock.config import S2Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade
+from rich_stock.strategies.base import Fill, Trade, TradePlan
 
 
 @dataclass
@@ -125,3 +125,20 @@ def backtest_ticker(df: pd.DataFrame, ticker: str, config: S2Config | None = Non
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def describe_trade_plan(df: pd.DataFrame, signal: S2Signal, config: S2Config) -> TradePlan:
+    """아직 진입 전인 S2 신호의 매수조건/손절가/익절가를 사람이 읽을 수 있게 정리한다.
+
+    S2는 "종가베팅"이라 정확한 체결가는 그날 장 마감 전까지 알 수 없다(entry_price=None) —
+    simulate_s2_trade와 동일하게, 손절가도 실제 체결가가 나와야 계산되므로 여기서는 비율만
+    설명한다. 익절가(전고점)는 상한가 발생 시점에 고정돼 확정돼 있다.
+    """
+    return TradePlan(
+        entry_price=None,
+        entry_desc=f"종가가 {signal.s2_level:,.0f}원(S2선) 이하로 마감하면 그 종가에 매수",
+        stop_price=None,
+        stop_desc=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%",
+        target_price=signal.high,
+        target_desc=f"{signal.high:,.0f}원(전고점)",
+    )

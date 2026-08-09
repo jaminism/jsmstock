@@ -34,7 +34,7 @@ import pandas as pd
 
 from rich_stock.config import S3Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade
+from rich_stock.strategies.base import Fill, Trade, TradePlan
 
 
 @dataclass
@@ -129,3 +129,20 @@ def backtest_ticker(df: pd.DataFrame, ticker: str, config: S3Config | None = Non
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def describe_trade_plan(df: pd.DataFrame, signal: S3Signal, config: S3Config) -> TradePlan:
+    """아직 진입 전인 S3 신호의 매수가(S3선)/손절가/익절가(전고점)를 사람이 읽을 수 있게 정리한다.
+
+    S3는 장중 터치 매수라 체결가가 s3_level로 확정돼 있고(simulate_s3_trade와 동일), 손절가도
+    그 값 기준 -7%로 미리 계산 가능하다(S2의 종가베팅과 달리 entry_price가 확정값).
+    """
+    stop_price = signal.s3_level * (1 + config.stop_loss_pct)
+    return TradePlan(
+        entry_price=signal.s3_level,
+        entry_desc=f"{signal.s3_level:,.0f}원(S3선) 터치 시 매수",
+        stop_price=stop_price,
+        stop_desc=f"{stop_price:,.0f}원(매수가 대비 {config.stop_loss_pct * 100:.0f}%)",
+        target_price=signal.high,
+        target_desc=f"{signal.high:,.0f}원(전고점)",
+    )
