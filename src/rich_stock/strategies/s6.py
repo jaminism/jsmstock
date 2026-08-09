@@ -38,7 +38,7 @@ import pandas as pd
 
 from rich_stock.config import S6Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade
+from rich_stock.strategies.base import Fill, Trade, TradePlan
 
 
 @dataclass
@@ -217,3 +217,29 @@ def backtest_ticker(df: pd.DataFrame, ticker: str, config: S6Config | None = Non
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def describe_trade_plan(df: pd.DataFrame, signal: S6Signal, config: S6Config) -> TradePlan:
+    """아직 진입 전인 S6 신호의 매수조건/손절/익절을 사람이 읽을 수 있게 정리한다.
+
+    S6는 다른 5개 기법과 달리 고정 그리드가 아니라 **매일 갱신되는 이동평균선**이 매수 기준선이라
+    (simulate_s6_trade 참고), entry_price는 df의 가장 최근 종가 기준 현재 이동평균값이다 — 내일
+    이후로는 값이 달라진다는 걸 감안해야 한다(entry_desc에 명시). 원문 설계상 **가격 손절이
+    아예 없다**(S6Config docstring 참고) — 그래서 stop_price=None/stop_desc가 "없음"을 뜻한다.
+    """
+    ma_short = float(df["Close"].rolling(config.ma_short).mean().iloc[-1])
+    ma_long = float(df["Close"].rolling(config.ma_long).mean().iloc[-1])
+    return TradePlan(
+        entry_price=ma_short,
+        entry_desc=(
+            f"{config.ma_short}일선(현재 {ma_short:,.0f}원, 매일 갱신됨) 터치 시 1차매수, "
+            f"{config.ma_long}일선(현재 {ma_long:,.0f}원) 터치 시 2차매수"
+        ),
+        stop_price=None,
+        stop_desc="없음 — 원문 설계상 가격 손절이 아예 없는 기법(존버)",
+        target_price=None,
+        target_desc=(
+            "1차만 보유 시: 매수가+5%부터 절반매도, 저점대비+17%에서 전량매도. "
+            "2차매수 이후엔 1차매수가(15일선가)에서 전량청산."
+        ),
+    )

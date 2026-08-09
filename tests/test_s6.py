@@ -5,6 +5,7 @@ from rich_stock.config import S6Config
 from rich_stock.strategies.s6 import (
     S6Signal,
     backtest_ticker,
+    describe_trade_plan,
     detect_s6_signals,
     simulate_s6_trade,
 )
@@ -40,6 +41,26 @@ def test_detect_signal_for_qualifying_streak():
     assert sig.pre_rally_low == 4800
     assert sig.peak_price == 16000
     assert sig.peak_index == 5
+
+
+def test_describe_trade_plan_uses_current_ma_and_has_no_stop_price():
+    # 랠리 구간(day0~6) + 이동평균이 유효해지도록 횡보 구간(day7~29, 23일치)을 덧붙인다.
+    opens = [5000, 5000, 5000, 6500, 8450, 15000, 14000] + [14000] * 23
+    highs = [5000, 5000, 6500, 8450, 10985, 16000, 14500] + [14100] * 23
+    lows = [4800, 4900, 5000, 6500, 8450, 14000, 13500] + [13900] * 23
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000] + [14000] * 23
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    sig = detect_s6_signals(df, S6Config())[0]
+
+    plan = describe_trade_plan(df, sig, S6Config())
+
+    ma_short = df["Close"].rolling(S6Config().ma_short).mean().iloc[-1]
+    ma_long = df["Close"].rolling(S6Config().ma_long).mean().iloc[-1]
+    assert plan.entry_price == ma_short
+    assert f"{ma_short:,.0f}" in plan.entry_desc
+    assert f"{ma_long:,.0f}" in plan.entry_desc
+    assert plan.stop_price is None
+    assert "손절" in plan.stop_desc
 
 
 def test_no_signal_when_streak_too_short():

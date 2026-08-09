@@ -33,7 +33,7 @@ import pandas as pd
 
 from rich_stock.config import S4Config, S5Config, S45BaseConfig
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade
+from rich_stock.strategies.base import Fill, Trade, TradePlan
 
 
 @dataclass
@@ -213,3 +213,40 @@ def backtest_ticker_s5(df: pd.DataFrame, ticker: str, config: S5Config | None = 
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def describe_trade_plan_s4(df: pd.DataFrame, signal: RallySignal, config: S4Config) -> TradePlan:
+    """아직 진입 전인 S4 신호의 매수조건/손절가/익절가를 사람이 읽을 수 있게 정리한다.
+
+    S4(종가베팅)는 세력봉 **당일** 종가가 레벨 이하로 마감해야만 매수되고(entry_valid_days=1),
+    체결가는 그 종가라 장 마감 전까지 정확히 알 수 없다(entry_price=None) — simulate_s4_trade와
+    동일 규칙.
+    """
+    level = signal.high - (signal.high - signal.low) * config.fib_ratio
+    return TradePlan(
+        entry_price=None,
+        entry_desc=f"세력봉 당일 종가가 {level:,.0f}원 이하로 마감해야 매수(당일 1회 한정 — 당일이 지났으면 기회 종료)",
+        stop_price=None,
+        stop_desc=f"매수가 대비 {config.stop_loss_pct * 100:.0f}%",
+        target_price=signal.high,
+        target_desc=f"{signal.high:,.0f}원(전고점)",
+    )
+
+
+def describe_trade_plan_s5(df: pd.DataFrame, signal: RallySignal, config: S5Config) -> TradePlan:
+    """아직 진입 전인 S5 신호의 매수가/손절가/익절가를 사람이 읽을 수 있게 정리한다.
+
+    S5(장중매매)는 레벨을 장중 터치하면 그 레벨 가격에 체결되므로(simulate_s5_trade) 매수가가
+    확정값이고, 손절/익절도 전부 그 값 기준 비율이라 미리 계산 가능하다.
+    """
+    level = signal.high - (signal.high - signal.low) * config.fib_ratio
+    stop_price = level * (1 + config.stop_loss_pct)
+    target_price = level * (1 + config.profit_target_pct)
+    return TradePlan(
+        entry_price=level,
+        entry_desc=f"{level:,.0f}원 터치 시 매수",
+        stop_price=stop_price,
+        stop_desc=f"{stop_price:,.0f}원(매수가 대비 {config.stop_loss_pct * 100:.0f}%)",
+        target_price=target_price,
+        target_desc=f"{target_price:,.0f}원(매수가 대비 +{config.profit_target_pct * 100:.0f}%)",
+    )

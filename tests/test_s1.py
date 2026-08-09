@@ -1,7 +1,7 @@
 import pandas as pd
 
 from rich_stock.config import S1Config
-from rich_stock.strategies.s1 import backtest_ticker, detect_s1_signals
+from rich_stock.strategies.s1 import backtest_ticker, describe_trade_plan, detect_s1_signals
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -120,6 +120,21 @@ def test_no_entry_when_r1_never_touched():
     df = make_df(closes, highs=highs, lows=lows)
     trades = backtest_ticker(df, "TEST", S1Config())
     assert trades == []
+
+
+def test_describe_trade_plan_uses_fixed_r0_r3_grid():
+    closes = [10000, 13000, 12500, 12000, 11500, 11000, 10500, 10000, 10000, 10000]
+    df = make_df(closes)
+    sig = detect_s1_signals(df, S1Config())[0]
+
+    plan = describe_trade_plan(df, sig, S1Config())
+
+    assert plan.entry_price == sig.r1
+    assert plan.stop_price == sig.r3
+    assert plan.target_price == sig.r0
+    assert f"{sig.r1:,.0f}" in plan.entry_desc
+    assert f"{sig.r3:,.0f}" in plan.stop_desc
+    assert f"{sig.r0:,.0f}" in plan.target_desc
 
 
 def test_addon_and_breakeven_partial():

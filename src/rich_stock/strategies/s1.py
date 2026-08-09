@@ -29,7 +29,7 @@ import pandas as pd
 
 from rich_stock.config import S1Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Fill, Trade
+from rich_stock.strategies.base import Fill, Trade, TradePlan
 from rich_stock.strategies.qualitative import QualScore, compute_qualitative_score
 
 
@@ -169,3 +169,19 @@ def backtest_ticker(df: pd.DataFrame, ticker: str, config: S1Config | None = Non
         if trade is not None:
             trades.append(trade)
     return trades
+
+
+def describe_trade_plan(df: pd.DataFrame, signal: S1Signal, config: S1Config) -> TradePlan:
+    """아직 진입 전인 S1 신호의 매수가(R1)/손절가(R3)/익절가(R0)를 사람이 읽을 수 있게 정리한다.
+
+    R0~R3는 상한가 발생 시점에 전부 고정되는 그리드라(detect_s1_signals 참고) 전부 확정된
+    숫자다 — simulate_s1_trade가 실제로 쓰는 것과 동일한 값.
+    """
+    return TradePlan(
+        entry_price=signal.r1,
+        entry_desc=f"{signal.r1:,.0f}원(R1) 터치 시 매수",
+        stop_price=signal.r3,
+        stop_desc=f"{signal.r3:,.0f}원(R3, 전일종가)",
+        target_price=signal.r0,
+        target_desc=f"{signal.r0:,.0f}원(R0, 상한가고가) — 도달 전 {signal.r2:,.0f}원(R2) 터치 시 추가매수",
+    )

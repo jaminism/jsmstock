@@ -1,7 +1,7 @@
 import pandas as pd
 
 from rich_stock.config import S3Config
-from rich_stock.strategies.s3 import backtest_ticker, detect_s3_signals
+from rich_stock.strategies.s3 import backtest_ticker, describe_trade_plan, detect_s3_signals
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -33,6 +33,20 @@ def test_detect_signal_computes_fixed_k2_grid():
     assert sig.high == 13000
     assert sig.low == 9800
     assert round(sig.s3_level) == 11400
+
+
+def test_describe_trade_plan_entry_and_stop_are_fixed_values():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s3_signals(df, S3Config())[0]
+
+    plan = describe_trade_plan(df, sig, S3Config())
+
+    assert plan.entry_price == sig.s3_level
+    assert plan.stop_price == sig.s3_level * (1 + S3Config().stop_loss_pct)
+    assert plan.target_price == sig.high
 
 
 def _scenario_df(day4_close, day4_low, day4_high):

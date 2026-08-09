@@ -1,7 +1,7 @@
 import pandas as pd
 
 from rich_stock.config import S2Config
-from rich_stock.strategies.s2 import backtest_ticker, detect_s2_signals
+from rich_stock.strategies.s2 import backtest_ticker, describe_trade_plan, detect_s2_signals
 
 
 def make_df(closes, highs=None, lows=None, opens=None, trading_value=100_000_000_000):
@@ -102,6 +102,22 @@ def test_forced_exit_after_hold_days():
     assert trade.fills[-1].reason == "exit_forced_hold"
     entry_idx = 2
     assert trade.fills[-1].date == df.index[entry_idx + 4 - 1]
+
+
+def test_describe_trade_plan_entry_unknown_until_close_but_target_fixed():
+    closes = [10000, 13000, 12500, 11200, 13100]
+    highs = [10000, 13000, 12600, 11500, 13100]
+    lows = [9800, 12000, 12300, 11300, 12700]
+    df = make_df(closes, highs=highs, lows=lows)
+    sig = detect_s2_signals(df, S2Config())[0]
+
+    plan = describe_trade_plan(df, sig, S2Config())
+
+    assert plan.entry_price is None  # 종가베팅이라 장마감 전까지 확정 안 됨
+    assert plan.stop_price is None
+    assert f"{sig.s2_level:,.0f}" in plan.entry_desc
+    assert plan.target_price == sig.high
+    assert f"{sig.high:,.0f}" in plan.target_desc
 
 
 def test_pre_rally_lookback_widens_low_anchor():
