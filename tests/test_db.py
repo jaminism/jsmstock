@@ -75,6 +75,22 @@ def test_save_signals_for_sp(conn):
     assert '"streak_len": 3' in row[5]
 
 
+def test_existing_livescan_signal_dates_excludes_non_livescan_runs(conn):
+    sig = S3Signal(ul_index=1, ul_date=pd.Timestamp("2024-01-03"), high=13000.0, low=9800.0, s3_level=11400.0)
+    db.save_signals(conn, "livescan_s3_2024-01-04_120000", "S3", "005930", [sig])
+    db.save_signals(conn, "backtest_research_run", "S3", "000660", [sig])
+
+    existing = db.existing_livescan_signal_dates(conn, "S3")
+    assert existing == {("005930", pd.Timestamp("2024-01-03"))}
+
+
+def test_existing_livescan_signal_dates_scoped_by_technique(conn):
+    sig = S3Signal(ul_index=1, ul_date=pd.Timestamp("2024-01-03"), high=13000.0, low=9800.0, s3_level=11400.0)
+    db.save_signals(conn, "livescan_s3_2024-01-04_120000", "S3", "005930", [sig])
+
+    assert db.existing_livescan_signal_dates(conn, "S2") == set()
+
+
 def test_save_signals_empty_list_is_noop(conn):
     db.save_signals(conn, "run", "S3", "005930", [])
     count = conn.execute("SELECT count(*) FROM signals").fetchone()[0]
