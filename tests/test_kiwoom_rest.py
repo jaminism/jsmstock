@@ -102,12 +102,13 @@ def test_query_current_price_takes_absolute_value_of_signed_fields():
     # 실측(2026-08-12, 005930): cur_prc/upl_pric/lst_pric은 회계상 부호가 아니라 등락 방향을
     # 나타낸다 — 하한가(lst_pric)도 항상 "-"로 온다. abs() 없이 그대로 쓰면 하한가가 음수가 된다.
     response = {
-        "stk_cd": "005930", "cur_prc": "+255500", "upl_pric": "+311000", "lst_pric": "-168000",
+        "stk_cd": "005930", "stk_nm": "삼성전자", "cur_prc": "+255500", "upl_pric": "+311000", "lst_pric": "-168000",
         "return_code": 0, "return_msg": "조회가 완료되었습니다",
     }
     client = _make_client_with_mock_tr(response)
     quote = query_current_price(client, "005930")
 
+    assert quote["종목명"] == "삼성전자"
     assert quote["현재가"] == 255500
     assert quote["상한가"] == 311000
     assert quote["하한가"] == 168000

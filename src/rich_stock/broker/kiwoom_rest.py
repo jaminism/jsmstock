@@ -228,6 +228,7 @@ def query_current_price(client: KiwoomRestClient, ticker: str) -> dict:
     """
     data = client.request_tr("ka10007", {"stk_cd": ticker}, url_path=MARKET_COND_TR_URL_PATH)
     return {
+        "종목명": data.get("stk_nm"),
         "현재가": abs(_parse_amount(data.get("cur_prc"))),
         "상한가": abs(_parse_amount(data.get("upl_pric"))),
         "하한가": abs(_parse_amount(data.get("lst_pric"))),
