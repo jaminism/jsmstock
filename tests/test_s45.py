@@ -178,6 +178,40 @@ def test_rl_lookback_excludes_event_day_itself():
     assert signals[0].low == 9900  # 8000(이벤트 당일)이 아니라 그 이전 최저가(day0/day1 중)여야 함
 
 
+def test_rl_lookback_excludes_halted_zero_volume_rows():
+    # lookback 구간에 거래정지(Volume=0, OHLC가 0 또는 이상값)로우가 섞이면 그 저가를 RL로
+    # 오인해선 안 된다 — 2026-08-12 실거래에서 발견된 버그(226340): 거래정지일의 Low=0이
+    # 되돌림 저점(RL)으로 잡혀 되돌림선이 실제 가격대와 무관하게 왜곡, 상/하한가 오류로 진입주문이
+    # 반복 거부됐다.
+    opens = [10000, 0, 10000]
+    highs = [10000, 0, 13000]
+    lows = [9900, 0, 9800]
+    closes = [10000, 10000, 13000]
+    df = make_df(opens, highs, lows, closes)
+    df.loc[df.index[1], "Volume"] = 0
+
+    signals = detect_s45_signals(df, S4Config(pre_event_lookback_days=5))
+
+    assert len(signals) == 1
+    assert signals[0].event_index == 2
+    assert signals[0].low == 9900  # 0(거래정지일)이 아니라 유효 거래일 중 최저가여야 함
+
+
+def test_rl_lookback_skips_event_when_all_lookback_rows_halted():
+    # lookback 구간 전체가 거래정지면 RL을 신뢰할 수 없으므로 이벤트 자체를 건너뛴다
+    # (0을 RL로 쓰는 것보다 신호를 안 만드는 게 안전).
+    opens = [0, 10000]
+    highs = [0, 13000]
+    lows = [0, 9800]
+    closes = [10000, 13000]
+    df = make_df(opens, highs, lows, closes)
+    df.loc[df.index[0], "Volume"] = 0
+
+    signals = detect_s45_signals(df, S4Config(pre_event_lookback_days=5))
+
+    assert signals == []
+
+
 def test_k1_plus_entry_at_close_same_day_only():
     # RH=13000, RL=9800(이벤트 이전) -> S2+ = 13000-(13000-9800)*0.236 = 12244.8
     # 이벤트 당일(index=1) 종가 12000 <= S2+ -> 그날 종가(12000)에 체결

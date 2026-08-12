@@ -90,8 +90,16 @@ def detect_s45_signals(df: pd.DataFrame, config: S45BaseConfig) -> list[RallySig
         if lookback_start == i:
             continue  # 이벤트 이전 데이터가 없으면 RL을 구할 수 없음
 
+        window = df.iloc[lookback_start:i]
+        # 거래정지/이상거래로 OHLCV가 전부 0으로 찍힌 로우(예: 226340의 2026-08-10)가 섞이면
+        # Low=0이 최저가로 잡혀 되돌림선이 실제 가격대와 무관하게 왜곡된다(2026-08-12 실거래에서
+        # 발견 — 상/하한가 오류로 진입주문이 반복 거부됨). Volume>0인 로우만 RL 계산에 사용한다.
+        valid_lows = window.loc[window["Volume"] > 0, "Low"]
+        if valid_lows.empty:
+            continue  # lookback 구간 전부 거래정지 등으로 유효 저가를 구할 수 없음
+
         rh = float(df["High"].iloc[i])
-        rl = float(df["Low"].iloc[lookback_start:i].min())  # 이벤트 당일(i) 제외
+        rl = float(valid_lows.min())  # 이벤트 당일(i) 제외
 
         signals.append(RallySignal(event_index=i, event_date=df.index[i], high=rh, low=rl))
     return signals
