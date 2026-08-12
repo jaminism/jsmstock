@@ -251,6 +251,25 @@ def test_update_pending_entry_order_replaces_order_no(conn):
     assert row[0] == "000002"
 
 
+def test_create_pending_position_stores_entry_target_price(conn):
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S5", signal_date="2026-08-01",
+        order_style="fixed_limit", entry_target_price=68000,
+    )
+    row = conn.execute("SELECT target_price FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row[0] == 68000
+
+
+def test_update_pending_entry_target_price_replaces_value(conn):
+    position_id = db.create_pending_position(
+        conn, "035420", technique="S6", signal_date="2026-08-01",
+        order_style="daily_recompute_limit", entry_target_price=100000,
+    )
+    db.update_pending_entry_target_price(conn, position_id, 101500)
+    row = conn.execute("SELECT target_price FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert row[0] == 101500
+
+
 def test_confirm_position_fill_creates_decision_and_updates_position(conn):
     position_id = db.create_pending_position(
         conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit",
@@ -359,7 +378,9 @@ def test_decrement_pending_entry_validity_expires_at_zero(conn):
 
 
 def test_get_pending_positions_and_get_open_positions(conn):
-    pending_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    pending_id = db.create_pending_position(
+        conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit", entry_target_price=68000,
+    )
     open_id = db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
     db.confirm_position_fill(conn, open_id, fill_price=50000, fill_quantity=5,
                               stop_price=46500, target_price=53500, max_hold_trading_days=4)
@@ -368,6 +389,7 @@ def test_get_pending_positions_and_get_open_positions(conn):
     open_ = db.get_open_positions(conn)
 
     assert [p["position_id"] for p in pending] == [pending_id]
+    assert pending[0]["target_price"] == 68000
     assert [p["position_id"] for p in open_] == [open_id]
     assert open_[0]["stop_price"] == 46500
 

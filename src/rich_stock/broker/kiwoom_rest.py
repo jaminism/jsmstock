@@ -31,6 +31,9 @@ ORDER_TR_URL_PATH = "/api/dostk/ordr"
 """주문(매수/매도/정정/취소) TR은 계좌조회(acnt)와 별개 엔드포인트를 쓴다(kiwoom-rest-api-spec.json
 확인) — request_tr()의 url_path 인자로 넘긴다."""
 
+MARKET_COND_TR_URL_PATH = "/api/dostk/mrkcond"
+"""시세(현재가/호가) TR도 계좌조회(acnt)와 별개 엔드포인트를 쓴다."""
+
 MOCK_BASE_URL = "https://mockapi.kiwoom.com"
 LIVE_BASE_URL = "https://api.kiwoom.com"
 
@@ -214,6 +217,22 @@ def query_order_status(
             }
         )
     return results
+
+
+def query_current_price(client: KiwoomRestClient, ticker: str) -> dict:
+    """ka10007(시세표성정보요청) — 실시간 현재가/상하한가 조회. 준실시간(폴링) 진입/청산 감시용.
+
+    cur_prc/upl_pric(상한가)/lst_pric(하한가)는 다른 TR의 금액 필드와 달리 부호가 회계상 음수가
+    아니라 "전일 대비 등락 방향"을 나타낸다(실측: 하한가도 "-168000"처럼 항상 마이너스로 옴) —
+    그대로 _parse_amount()를 쓰면 하한가가 음수로 잘못 해석되므로 abs()로 감싼다.
+    """
+    data = client.request_tr("ka10007", {"stk_cd": ticker}, url_path=MARKET_COND_TR_URL_PATH)
+    return {
+        "현재가": abs(_parse_amount(data.get("cur_prc"))),
+        "상한가": abs(_parse_amount(data.get("upl_pric"))),
+        "하한가": abs(_parse_amount(data.get("lst_pric"))),
+        "_raw": data,
+    }
 
 
 # --- 주문(매수/매도/취소) -------------------------------------------------

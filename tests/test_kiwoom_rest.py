@@ -5,6 +5,7 @@ import pytest
 from rich_stock.broker.kiwoom_rest import (
     ACCOUNT_TR_URL_PATH,
     LIVE_BASE_URL,
+    MARKET_COND_TR_URL_PATH,
     ORDER_TR_URL_PATH,
     KiwoomCredentials,
     KiwoomRestClient,
@@ -13,6 +14,7 @@ from rich_stock.broker.kiwoom_rest import (
     cancel_order,
     place_buy_order,
     place_sell_order,
+    query_current_price,
     query_deposit,
     query_holdings,
     query_order_status,
@@ -94,6 +96,22 @@ def test_query_holdings_empty_list_when_no_positions():
     response = {"acnt_evlt_remn_indv_tot": [], "return_code": 0, "return_msg": "조회완료"}
     client = _make_client_with_mock_tr(response)
     assert query_holdings(client) == []
+
+
+def test_query_current_price_takes_absolute_value_of_signed_fields():
+    # 실측(2026-08-12, 005930): cur_prc/upl_pric/lst_pric은 회계상 부호가 아니라 등락 방향을
+    # 나타낸다 — 하한가(lst_pric)도 항상 "-"로 온다. abs() 없이 그대로 쓰면 하한가가 음수가 된다.
+    response = {
+        "stk_cd": "005930", "cur_prc": "+255500", "upl_pric": "+311000", "lst_pric": "-168000",
+        "return_code": 0, "return_msg": "조회가 완료되었습니다",
+    }
+    client = _make_client_with_mock_tr(response)
+    quote = query_current_price(client, "005930")
+
+    assert quote["현재가"] == 255500
+    assert quote["상한가"] == 311000
+    assert quote["하한가"] == 168000
+    client.request_tr.assert_called_once_with("ka10007", {"stk_cd": "005930"}, url_path=MARKET_COND_TR_URL_PATH)
 
 
 def test_request_tr_raises_on_nonzero_return_code():

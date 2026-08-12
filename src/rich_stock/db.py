@@ -33,6 +33,9 @@
       손절가/익절가/경과일 같은 살아있는 상태를 담는다. status='open'이 되는 시점(체결 확인)에
       비로소 decisions row가 생성되고 decision_id로 연결된다 — 그 전까지 decision_id는 NULL
       (주문 제출 ≠ 체결 확정이므로 미체결 상태를 decisions에 기록하지 않기 위함).
+      target_price는 상태에 따라 의미가 다르다: pending_entry 동안은 "감시 중인 목표 진입가"
+      (create_pending_position/update_pending_entry_target_price), open이 되는 순간
+      confirm_position_fill이 익절가로 덮어써 이후로는 청산 브라켓의 일부가 된다.
 """
 
 from __future__ import annotations
@@ -399,26 +402,40 @@ def create_pending_position(
     order_style: str,
     entry_order_no: str | None = None,
     entry_valid_until_trading_day: int | None = None,
+    entry_target_price: float | None = None,
     note: str | None = None,
 ) -> str:
-    """진입 주문을 막 제출한 상태를 기록한다(status='pending_entry'). Returns: position_id."""
+    """진입 대상으로 막 확정된 상태를 기록한다(status='pending_entry'). Returns: position_id.
+
+    entry_target_price는 체결 전(pending_entry)에는 "감시 중인 목표 진입가"로, confirm_position_fill
+    호출 이후(open)에는 익절가로 의미가 바뀌는 target_price 컬럼을 그대로 재사용한다 — 체결 전/후가
+    서로 배타적인 상태라 컬럼을 따로 늘리지 않아도 충돌하지 않는다."""
     position_id = new_position_id(ticker)
     conn.execute(
         """
         INSERT INTO auto_positions (position_id, ticker, technique, signal_date, status,
-                                     order_style, entry_order_no, entry_valid_until_trading_day, note)
-        VALUES (?, ?, ?, ?, 'pending_entry', ?, ?, ?, ?)
+                                     order_style, entry_order_no, entry_valid_until_trading_day, target_price, note)
+        VALUES (?, ?, ?, ?, 'pending_entry', ?, ?, ?, ?, ?)
         """,
-        [position_id, ticker, technique, signal_date, order_style, entry_order_no, entry_valid_until_trading_day, note],
+        [position_id, ticker, technique, signal_date, order_style, entry_order_no, entry_valid_until_trading_day, entry_target_price, note],
     )
     return position_id
 
 
 def update_pending_entry_order(conn: duckdb.DuckDBPyConnection, position_id: str, entry_order_no: str) -> None:
-    """KRX 지정가는 당일만 유효해 매일 재주문해야 하는 기법(S1/S3/S5/S6)의 새 주문번호로 갱신한다."""
+    """진입 조건(목표가 허용범위 진입)이 충족되어 실제로 주문을 낸 시점에 주문번호를 기록한다."""
     conn.execute(
         "UPDATE auto_positions SET entry_order_no = ?, updated_at = current_timestamp WHERE position_id = ?",
         [entry_order_no, position_id],
+    )
+
+
+def update_pending_entry_target_price(conn: duckdb.DuckDBPyConnection, position_id: str, target_price: float) -> None:
+    """매일 갱신되는 진입가(예: S6의 이동평균 기반 되돌림선)를 매매 시작 전(entry_order_no가 아직
+    없는 pending_entry)에 한해 하루 1회 재계산해 갱신한다."""
+    conn.execute(
+        "UPDATE auto_positions SET target_price = ?, updated_at = current_timestamp WHERE position_id = ?",
+        [target_price, position_id],
     )
 
 
@@ -532,7 +549,7 @@ def decrement_pending_entry_validity(conn: duckdb.DuckDBPyConnection) -> list[st
 def get_pending_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [
         "position_id", "ticker", "technique", "signal_date", "order_style",
-        "entry_order_no", "entry_valid_until_trading_day", "updated_at",
+        "entry_order_no", "entry_valid_until_trading_day", "target_price", "updated_at",
     ]
     rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'pending_entry'").fetchall()
     return [dict(zip(cols, row)) for row in rows]
