@@ -140,6 +140,58 @@ def test_request_tr_raises_on_nonzero_return_code():
         requests.post = original_post
 
 
+# --- issue_token(au10001) ---------------------------------------------------
+
+
+def test_issue_token_parses_response():
+    # 스펙(au10001)의 responseExample을 그대로 축약
+    import requests
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "expires_dt": "20241107083713", "token_type": "bearer", "token": "WQJCwyqInphKnR3bSRtB9NE1lv",
+                "return_code": 0, "return_msg": "정상적으로 처리되었습니다",
+            }
+
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    original_post = requests.post
+    requests.post = MagicMock(return_value=FakeResponse())
+    try:
+        token = client.issue_token()
+    finally:
+        requests.post = original_post
+
+    assert token.token == "WQJCwyqInphKnR3bSRtB9NE1lv"
+    assert token.token_type == "bearer"
+    assert token.expires_dt == "20241107083713"
+
+
+def test_issue_token_raises_on_nonzero_return_code():
+    # HTTP 200이지만 return_code!=0인 경우(예: appkey/secretkey 오류) — 예전에는 이 체크가
+    # 없어서 data["token"]에서 알아보기 힘든 KeyError만 났다.
+    import requests
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"return_code": 1, "return_msg": "AppKey 또는 SecretKey 정보가 틀립니다"}
+
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    original_post = requests.post
+    requests.post = MagicMock(return_value=FakeResponse())
+    try:
+        with pytest.raises(RuntimeError, match="AppKey 또는 SecretKey"):
+            client.issue_token()
+    finally:
+        requests.post = original_post
+
+
 # --- 주문(kt10000/kt10001/kt10003) -----------------------------------------
 
 
