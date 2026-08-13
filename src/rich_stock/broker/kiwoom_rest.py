@@ -91,6 +91,8 @@ class KiwoomRestClient:
         )
         resp.raise_for_status()
         data = resp.json()
+        if data.get("return_code", 0) != 0:
+            raise RuntimeError(f"[au10001] 토큰 발급 실패: {data.get('return_msg')} (전체 응답: {data})")
         self._token = AccessToken(
             token=data["token"], token_type=data["token_type"], expires_dt=data["expires_dt"]
         )
