@@ -308,3 +308,157 @@ def cancel_order(client: KiwoomRestClient, ticker: str, orig_order_no: str, quan
     }
     data = client.request_tr("kt10003", body, url_path=ORDER_TR_URL_PATH)
     return {"주문번호": data.get("ord_no"), "원주문번호": data.get("base_orig_ord_no"), "메시지": data.get("return_msg"), "_raw": data}
+
+
+# --- 해외(미국)주식 조회/주문 -------------------------------------------------
+#
+# 2026-08-15 사용자 요청("해외 종목으로 테스트할 수 있게 기능 추가") — 그 전까지는 국내(KRX)
+# TR만 구현돼 있었다(위 함수들 전부 dostk/*). kiwoom-rest-api-spec.json 확인 결과 모의투자
+# 서버(mockapi.kiwoom.com) 자체는 미국주식 주문(ust20000/20001/20003)을 지원하고, URL 경로만
+# 국내(/api/dostk/...)와 다르다(/api/us/...) — 계좌번호는 국내와 동일한 계좌(appkey/secretkey)에
+# 연결된 해외증권 파트를 그대로 쓴다. 이 프로젝트의 6개 매매기법(S1~S6)은 전부 KRX 기반이라
+# 자동매매(auto_trader.py)에서는 쓰지 않고, 수동 CLI 테스트 용도로만 추가한다
+# (scripts/local/kiwoom_order.py의 *-us 서브커맨드 참고).
+
+US_ACCOUNT_TR_URL_PATH = "/api/us/acnt"
+US_ORDER_TR_URL_PATH = "/api/us/ordr"
+US_MARKET_COND_TR_URL_PATH = "/api/us/mrkcond"
+
+US_ORDER_TYPE_LIMIT = "00"
+"""미국주식 해외매매구분 코드 "00" = 지정가. 국내(ORDER_TYPE_LIMIT="0")와 자릿수가 다르므로
+섞어 쓰지 않도록 별도 상수로 둔다."""
+
+US_ORDER_TYPE_MARKET = "03"
+"""미국주식 해외매매구분 코드 "03" = 시장가."""
+
+DEFAULT_US_EXCHANGE = "ND"
+"""거래소구분(stex_tp) 기본값 — NASDAQ. 다른 값: NY(NYSE), NA(AMEX)."""
+
+
+def _parse_decimal_us(raw: str | None) -> float:
+    """미국주식 TR 응답의 숫자 문자열을 float로 변환. 국내(정수, 15자리 0-padding)와 달리
+    미국은 소수점(센트) 단위이고, 부호가 붙은 필드(+/-)도 파이썬 float()가 그대로 처리한다.
+    다만 환율(usd_exch_rate) 등 일부 필드는 스펙상 "세자릿수 콤마" 포맷("1,520.80")이라
+    콤마를 먼저 제거해야 한다."""
+    raw = (raw or "").strip().replace(",", "")
+    return float(raw) if raw else 0.0
+
+
+def query_deposit_us(client: KiwoomRestClient) -> dict:
+    """ust21160(미국주식 예수금 상세) — 해외증권 파트의 예수금 현황. 국내 query_deposit()과
+    별개 TR(계좌 자체는 같음, 원화/외화 예수금이 구분 관리됨)."""
+    data = client.request_tr("ust21160", {}, url_path=US_ACCOUNT_TR_URL_PATH)
+    return {
+        "원화예수금": _parse_amount(data.get("won_entr")),
+        "D0외화예수금(USD)": _parse_decimal_us(data.get("d0_usd_fx_entr")),
+        "매도환율(USD)": _parse_decimal_us(data.get("usd_exch_rate")),
+        "_raw": data,
+    }
+
+
+def query_holdings_us(client: KiwoomRestClient) -> list[dict]:
+    """ust21070(미국주식 원장잔고확인) — 해외 보유종목 리스트. stex_tp/stk_cd를 비워두면 전체 조회."""
+    data = client.request_tr("ust21070", {"stex_tp": "", "stk_cd": ""}, url_path=US_ACCOUNT_TR_URL_PATH)
+    holdings = []
+    for row in data.get("result_list", []):
+        holdings.append(
+            {
+                "종목코드": row.get("stk_cd"),
+                "종목명": row.get("frgn_stk_nm"),
+                "보유수량": _parse_amount(row.get("poss_qty")),
+                "매입단가": _parse_decimal_us(row.get("frgn_stk_book_uv")),
+                "현재가": _parse_decimal_us(row.get("now_pric")),
+                "손익금액": _parse_decimal_us(row.get("pl_amt")),
+                "손익율(%)": row.get("pl_rt"),
+            }
+        )
+    return holdings
+
+
+def query_current_price_us(client: KiwoomRestClient, ticker: str, exchange: str = DEFAULT_US_EXCHANGE) -> dict:
+    """usa20100(미국주식 현재가 종목정보) — 현재가/상하한가/전일종가 조회.
+
+    cur_prc는 스펙 예시상 "+201.4700"처럼 부호가 붙어 오는데, 국내 ka10007에서 실측으로 확인된
+    "부호=등락방향"(회계상 음수가 아님) 관례와 동일해 보이지만, 이 TR 자체로는 아직 실제 모의투자
+    호출로 검증하지 않았다(2026-08-15 스펙 문서만으로 구현) — abs()를 적용해두되, 실사용 중 하한가
+    근처 등에서 부호가 진짜 등락방향인지 실측 확인이 필요하다."""
+    data = client.request_tr(
+        "usa20100", {"stex_tp": exchange, "stk_cd": ticker}, url_path=US_MARKET_COND_TR_URL_PATH
+    )
+    return {
+        "종목명": data.get("stk_nm"),
+        "현재가": abs(_parse_decimal_us(data.get("cur_prc"))),
+        "전일종가": _parse_decimal_us(data.get("base_close_pric")),
+        "통화": data.get("curr_unit"),
+        "_raw": data,
+    }
+
+
+def query_order_status_us(
+    client: KiwoomRestClient, ticker: str | None = None, exchange: str | None = None
+) -> list[dict]:
+    """ust21510(미국주식 당일 주문체결 확인) — 국내 query_order_status()의 해외 버전. 주문 제출
+    응답만으로는 실제 체결 여부를 알 수 없어 체결 확인은 이 함수로 재조회해야 한다."""
+    body = {"slby_tp": "0", "stex_tp": exchange or "", "stk_cd": ticker or ""}
+    data = client.request_tr("ust21510", body, url_path=US_ACCOUNT_TR_URL_PATH)
+    results = []
+    for row in data.get("result_list", []):
+        ord_qty = _parse_amount(row.get("ord_qty"))
+        cntr_qty = _parse_amount(row.get("cntr_qty"))
+        results.append(
+            {
+                "주문번호": row.get("ord_no"),
+                "종목코드": row.get("stk_cd"),
+                "종목명": row.get("frgn_stk_nm"),
+                "주문수량": ord_qty,
+                "체결수량": cntr_qty,
+                "체결단가": _parse_decimal_us(row.get("cntr_uv")),
+                "미체결수량": max(ord_qty - cntr_qty, 0),
+                "전량체결": ord_qty > 0 and cntr_qty >= ord_qty,
+                "_raw": row,
+            }
+        )
+    return results
+
+
+def place_buy_order_us(
+    client: KiwoomRestClient, ticker: str, quantity: int, price: float | None = None, exchange: str = DEFAULT_US_EXCHANGE
+) -> dict:
+    """ust20000(미국주식 매수 주문). price를 안 넘기면 시장가, 넘기면 그 가격의 지정가로 주문한다
+    (price는 달러 소수점 포함, 예: 213.04). place_buy_order()와 동일하게 모의투자 계좌에서만 허용."""
+    _require_mock_account(client)
+    body = {
+        "stex_tp": exchange,
+        "stk_cd": ticker,
+        "ord_qty": str(quantity),
+        "ord_uv": "" if price is None else str(price),
+        "trde_tp": US_ORDER_TYPE_MARKET if price is None else US_ORDER_TYPE_LIMIT,
+    }
+    data = client.request_tr("ust20000", body, url_path=US_ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "메시지": data.get("return_msg"), "_raw": data}
+
+
+def place_sell_order_us(
+    client: KiwoomRestClient, ticker: str, quantity: int, price: float | None = None, exchange: str = DEFAULT_US_EXCHANGE
+) -> dict:
+    """ust20001(미국주식 매도 주문). place_buy_order_us와 동일 규칙(가격 미지정 시 시장가)."""
+    _require_mock_account(client)
+    body = {
+        "stk_cd": ticker,
+        "stex_tp": exchange,
+        "ord_qty": str(quantity),
+        "ord_uv": "" if price is None else str(price),
+        "stop_pric": "",
+        "trde_tp": US_ORDER_TYPE_MARKET if price is None else US_ORDER_TYPE_LIMIT,
+    }
+    data = client.request_tr("ust20001", body, url_path=US_ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "메시지": data.get("return_msg"), "_raw": data}
+
+
+def cancel_order_us(client: KiwoomRestClient, ticker: str, orig_order_no: str, exchange: str = DEFAULT_US_EXCHANGE) -> dict:
+    """ust20003(미국주식 취소 주문). 국내 kt10003과 달리 부분취소 수량 지정이 스펙에 없어
+    (요청 필드에 취소수량 항목 자체가 없음) 해당 주문의 잔량 전부를 취소하는 것만 가능하다."""
+    _require_mock_account(client)
+    body = {"orig_ord_no": orig_order_no, "stex_tp": exchange, "stk_cd": ticker}
+    data = client.request_tr("ust20003", body, url_path=US_ORDER_TR_URL_PATH)
+    return {"주문번호": data.get("ord_no"), "취소수량": _parse_amount(data.get("cncl_ord_qty")), "메시지": data.get("return_msg"), "_raw": data}
