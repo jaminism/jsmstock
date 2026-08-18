@@ -22,9 +22,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+
+TOKEN_EXPIRY_BUFFER = timedelta(minutes=5)
+"""만료시각(expires_dt) 이 안전마진 전이면 이미 만료된 것으로 취급해 미리 재발급한다."""
 
 ACCOUNT_TR_URL_PATH = "/api/dostk/acnt"
 ORDER_TR_URL_PATH = "/api/dostk/ordr"
@@ -98,9 +102,22 @@ class KiwoomRestClient:
         )
         return self._token
 
+    def _token_expired(self) -> bool:
+        """expires_dt("YYYYMMDDHHMMSS")가 안전마진 안쪽이거나 파싱 불가하면 만료로 취급한다.
+
+        상시 실행되는 데몬(auto-trader-daemon)이 며칠씩 재시작 없이 켜져 있으면 캐시된 토큰이
+        만료된 채로 계속 재사용되어 모든 TR이 8005(Token이 유효하지 않습니다)로 실패하는 문제가
+        있었다(2026-08-18) — 발급 시점에 None 체크만 하고 만료시각을 아예 확인하지 않던 게 원인.
+        """
+        try:
+            expires_at = datetime.strptime(self._token.expires_dt, "%Y%m%d%H%M%S")
+        except (ValueError, TypeError):
+            return True
+        return datetime.now() >= expires_at - TOKEN_EXPIRY_BUFFER
+
     @property
     def token(self) -> AccessToken:
-        if self._token is None:
+        if self._token is None or self._token_expired():
             self.issue_token()
         return self._token
 
@@ -131,6 +148,17 @@ class KiwoomRestClient:
         resp.raise_for_status()
         data = resp.json()
         if data.get("return_code", 0) != 0:
+            if "8005" in str(data.get("return_msg", "")):
+                # 만료시각 기반 선제 재발급(_token_expired)을 뚫고 들어온 경우의 안전망 —
+                # 서버 측 조기 무효화/시계 오차 등으로 만료시각 계산이 어긋날 수 있다.
+                self.issue_token()
+                headers = {**self.auth_headers(), "api-id": api_id, "cont-yn": cont_yn, "next-key": next_key}
+                resp = requests.post(f"{self.base_url}{url_path}", headers=headers, json=body, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("return_code", 0) != 0:
+                    raise RuntimeError(f"[{api_id}] TR 실패(토큰 재발급 후 재시도까지): {data.get('return_msg')} (전체 응답: {data})")
+                return data
             raise RuntimeError(f"[{api_id}] TR 실패: {data.get('return_msg')} (전체 응답: {data})")
         return data
 

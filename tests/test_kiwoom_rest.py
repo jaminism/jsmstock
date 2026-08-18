@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ from rich_stock.broker.kiwoom_rest import (
     US_ACCOUNT_TR_URL_PATH,
     US_MARKET_COND_TR_URL_PATH,
     US_ORDER_TR_URL_PATH,
+    AccessToken,
     KiwoomCredentials,
     KiwoomRestClient,
     LiveTradingBlockedError,
@@ -179,6 +181,90 @@ def test_issue_token_parses_response():
     assert token.token == "WQJCwyqInphKnR3bSRtB9NE1lv"
     assert token.token_type == "bearer"
     assert token.expires_dt == "20241107083713"
+
+
+def test_token_reissues_when_cached_token_expired():
+    # 2026-08-18: 상시 데몬이 며칠씩 재시작 없이 켜져 있으면 캐시된 토큰이 만료된 채 계속
+    # 재사용돼 모든 TR이 8005로 실패했다 — expires_dt를 확인해서 만료 전에 재발급해야 한다.
+    import requests
+
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    expired_dt = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    client._token = AccessToken(token="stale", token_type="Bearer", expires_dt=expired_dt)
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "expires_dt": (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"),
+                "token_type": "Bearer", "token": "fresh", "return_code": 0, "return_msg": "정상",
+            }
+
+    original_post = requests.post
+    requests.post = MagicMock(return_value=FakeResponse())
+    try:
+        token = client.token
+    finally:
+        requests.post = original_post
+
+    assert token.token == "fresh"
+
+
+def test_token_reused_when_still_valid():
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    valid_dt = (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
+    client._token = AccessToken(token="cached", token_type="Bearer", expires_dt=valid_dt)
+    client.issue_token = MagicMock(side_effect=AssertionError("재발급이 호출되면 안 됨"))
+
+    assert client.token.token == "cached"
+
+
+def test_request_tr_reissues_token_and_retries_on_8005():
+    # 만료시각 계산이 어긋나는 경우(시계 오차 등)의 안전망 — 8005 응답을 받으면 토큰을
+    # 재발급하고 한 번 더 시도한다.
+    import requests
+
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    client._token = AccessToken(
+        token="stale", token_type="Bearer", expires_dt=(datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
+    )
+
+    responses = [
+        {"return_code": 3, "return_msg": "인증에 실패했습니다[8005:Token이 유효하지 않습니다]"},
+        {"entr": "000000000017534", "pymn_alow_amt": "0", "ord_alow_amt": "0", "d2_entra": "0", "return_code": 0, "return_msg": "조회완료"},
+    ]
+    token_responses = [
+        {"expires_dt": (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"), "token_type": "Bearer", "token": "fresh", "return_code": 0, "return_msg": "정상"},
+    ]
+
+    call_log = []
+
+    def fake_post(url, **kwargs):
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                if "/oauth2/token" in url:
+                    call_log.append("token")
+                    return token_responses.pop(0)
+                call_log.append("tr")
+                return responses.pop(0)
+
+        return FakeResponse()
+
+    original_post = requests.post
+    requests.post = fake_post
+    try:
+        data = client.request_tr("kt00001", {"qry_tp": "3"})
+    finally:
+        requests.post = original_post
+
+    assert call_log == ["tr", "token", "tr"]
+    assert data["return_code"] == 0
+    assert client._token.token == "fresh"
 
 
 def test_issue_token_raises_on_nonzero_return_code():
