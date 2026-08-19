@@ -301,7 +301,7 @@ def place_buy_order(client: KiwoomRestClient, ticker: str, quantity: int, price:
     body = {
         "dmst_stex_tp": "KRX",
         "stk_cd": ticker,
-        "ord_qty": str(quantity),
+        "ord_qty": str(int(quantity)),
         "ord_uv": "" if price is None else str(price),
         "trde_tp": ORDER_TYPE_MARKET if price is None else ORDER_TYPE_LIMIT,
         "cond_uv": "",
@@ -316,7 +316,7 @@ def place_sell_order(client: KiwoomRestClient, ticker: str, quantity: int, price
     body = {
         "dmst_stex_tp": "KRX",
         "stk_cd": ticker,
-        "ord_qty": str(quantity),
+        "ord_qty": str(int(quantity)),
         "ord_uv": "" if price is None else str(price),
         "trde_tp": ORDER_TYPE_MARKET if price is None else ORDER_TYPE_LIMIT,
         "cond_uv": "",
@@ -332,7 +332,7 @@ def cancel_order(client: KiwoomRestClient, ticker: str, orig_order_no: str, quan
         "dmst_stex_tp": "KRX",
         "orig_ord_no": orig_order_no,
         "stk_cd": ticker,
-        "cncl_qty": str(quantity),
+        "cncl_qty": str(int(quantity)),
     }
     data = client.request_tr("kt10003", body, url_path=ORDER_TR_URL_PATH)
     return {"주문번호": data.get("ord_no"), "원주문번호": data.get("base_orig_ord_no"), "메시지": data.get("return_msg"), "_raw": data}
@@ -458,7 +458,7 @@ def place_buy_order_us(
     body = {
         "stex_tp": exchange,
         "stk_cd": ticker,
-        "ord_qty": str(quantity),
+        "ord_qty": str(int(quantity)),
         "ord_uv": "" if price is None else str(price),
         "trde_tp": US_ORDER_TYPE_MARKET if price is None else US_ORDER_TYPE_LIMIT,
     }
@@ -474,7 +474,7 @@ def place_sell_order_us(
     body = {
         "stk_cd": ticker,
         "stex_tp": exchange,
-        "ord_qty": str(quantity),
+        "ord_qty": str(int(quantity)),
         "ord_uv": "" if price is None else str(price),
         "stop_pric": "",
         "trde_tp": US_ORDER_TYPE_MARKET if price is None else US_ORDER_TYPE_LIMIT,

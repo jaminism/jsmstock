@@ -333,6 +333,18 @@ def test_place_sell_order_sends_correct_body_and_url():
     )
 
 
+def test_place_sell_order_with_float_quantity_sends_integer_ord_qty():
+    # DB의 fill_quantity 컬럼이 DOUBLE이라 청산 시 30.0 같은 float로 넘어올 수 있는데,
+    # 키움 kt10001은 "30.0"을 "정수만 입력가능합니다" 오류로 거부한다(2026-08-19 실거래 확인).
+    response = {"ord_no": "0000138", "dmst_stex_tp": "KRX", "return_code": 0, "return_msg": "매도주문이 완료되었습니다."}
+    client = _make_client_with_mock_tr(response)
+
+    place_sell_order(client, "005930", quantity=30.0, price=None)
+
+    body = client.request_tr.call_args[0][1]
+    assert body["ord_qty"] == "30"
+
+
 def test_cancel_order_sends_correct_body_and_url():
     # 스펙(kt10003)의 responseExample을 그대로 축약
     response = {"ord_no": "0000141", "base_orig_ord_no": "0000139", "cncl_qty": "000000000001", "return_code": 0, "return_msg": "매수취소 주문입력이 완료되었습니다"}
