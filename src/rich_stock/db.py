@@ -134,18 +134,29 @@ CREATE TABLE IF NOT EXISTS auto_positions (
 
 
 def connect(db_path: str | Path = DEFAULT_DB_PATH, read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """DuckDB 파일에 연결한다. read_only=False(기본값)면 없는 파일은 생성하고 스키마를 보장한다.
+    """DuckDB 파일(또는 EXPORT DATABASE 스냅샷 디렉터리)에 연결한다.
 
-    DuckDB는 파일 하나에 동시 writer를 하나만 허용한다 — auto-trader-daemon이 상시로 DB를
-    쓰기모드로 열어두는 지금(2026-08-21), review_*.py 같은 조회 전용 스크립트가 기본값(쓰기모드)
-    으로 연결을 시도하면 "Could not set lock on file" IOException으로 매번 실패한다
-    (daily_watchlist.py가 8/13~8/20 매일 조용히 이 방식으로 죽어있던 것과 같은 원인). 순수
-    조회 용도라면 read_only=True로 열어야 데몬이 떠 있어도 충돌 없이 동시 접속 가능하다.
-    read_only=True일 땐 파일이 이미 있다고 가정하고 디렉터리 생성/스키마 실행을 건너뛴다
-    (읽기 전용 연결로는 CREATE TABLE을 실행할 수 없다)."""
+    read_only=False(기본값)면 없는 파일은 생성하고 스키마를 보장한다.
+
+    **주의(2026-08-21 정정)**: read_only=True도 만능이 아니다 — DuckDB는 파일 하나에 쓰기
+    프로세스가 붙어있으면 읽기 전용 연결조차 거부한다(실측 확인,
+    https://duckdb.org/docs/stable/connect/concurrency). auto-trader-daemon이 상시로 DB를
+    쓰기모드로 열어두는 동안은(2026-08-12부터) read_only=True를 줘도 "Could not set lock on
+    file" IOException이 그대로 난다 — 이게 안전한 경우는 "지금 아무도 쓰기모드로 안 열고
+    있을 때"뿐이다.
+
+    데몬이 항상 떠있는 상황에서 진짜 안전하게 조회하려면, 데몬이 자기 커넥션으로
+    `EXPORT DATABASE`를 내보낸 스냅샷 **디렉터리**를 가리키면 된다 — `db_path`가 디렉터리면
+    `:memory:` DB로 `IMPORT DATABASE`해 완전히 독립적인 사본을 만든다(파일 잠금과 무관, 항상
+    성공). 스냅샷을 내보내는 쪽은 scripts/local/auto_trader.py의 export_db_snapshot 참고."""
+    path = Path(db_path)
+    if path.is_dir():
+        conn = duckdb.connect(":memory:")
+        conn.execute(f"IMPORT DATABASE '{path.as_posix()}'")
+        return conn
     if read_only:
         return duckdb.connect(str(db_path), read_only=True)
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_path))
     conn.execute(_SCHEMA)
     return conn
