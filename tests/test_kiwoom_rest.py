@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -189,7 +190,7 @@ def test_token_reissues_when_cached_token_expired():
     import requests
 
     client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
-    expired_dt = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    expired_dt = (datetime.now(ZoneInfo("Asia/Seoul")) - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
     client._token = AccessToken(token="stale", token_type="Bearer", expires_dt=expired_dt)
 
     class FakeResponse:
@@ -198,7 +199,7 @@ def test_token_reissues_when_cached_token_expired():
 
         def json(self):
             return {
-                "expires_dt": (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"),
+                "expires_dt": (datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"),
                 "token_type": "Bearer", "token": "fresh", "return_code": 0, "return_msg": "정상",
             }
 
@@ -214,7 +215,7 @@ def test_token_reissues_when_cached_token_expired():
 
 def test_token_reused_when_still_valid():
     client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
-    valid_dt = (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
+    valid_dt = (datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
     client._token = AccessToken(token="cached", token_type="Bearer", expires_dt=valid_dt)
     client.issue_token = MagicMock(side_effect=AssertionError("재발급이 호출되면 안 됨"))
 
@@ -228,7 +229,7 @@ def test_request_tr_reissues_token_and_retries_on_8005():
 
     client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
     client._token = AccessToken(
-        token="stale", token_type="Bearer", expires_dt=(datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
+        token="stale", token_type="Bearer", expires_dt=(datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
     )
 
     responses = [
@@ -236,7 +237,7 @@ def test_request_tr_reissues_token_and_retries_on_8005():
         {"entr": "000000000017534", "pymn_alow_amt": "0", "ord_alow_amt": "0", "d2_entra": "0", "return_code": 0, "return_msg": "조회완료"},
     ]
     token_responses = [
-        {"expires_dt": (datetime.now() + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"), "token_type": "Bearer", "token": "fresh", "return_code": 0, "return_msg": "정상"},
+        {"expires_dt": (datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(hours=1)).strftime("%Y%m%d%H%M%S"), "token_type": "Bearer", "token": "fresh", "return_code": 0, "return_msg": "정상"},
     ]
 
     call_log = []
