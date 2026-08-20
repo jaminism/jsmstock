@@ -23,10 +23,10 @@ def test_connect_creates_schema(conn):
 
 
 def test_connect_read_only_can_query_existing_db(tmp_path):
-    # 2026-08-21: auto-trader-daemon이 상시로 DB를 쓰기모드로 열어두면, review_*.py 같은
-    # 조회 전용 스크립트가 기본값(쓰기모드)으로 다시 연결을 시도할 때 파일 잠금 충돌이 난다
-    # (daily_watchlist.py가 8일간 조용히 이 방식으로 실패했던 것과 같은 원인) — read_only=True로
-    # 열면 이미 있는 DB를 문제없이 조회할 수 있어야 한다.
+    # writer가 close()된 뒤엔 read_only=True로 문제없이 조회할 수 있다. 다만 writer가 "계속
+    # 열려있는 동안"은 read_only=True도 막힌다는 게 별개로 확인된 사실이다(상시 데몬처럼) —
+    # 그 경우엔 아래 test_connect_import_from_export_directory의 EXPORT/IMPORT DATABASE
+    # 방식(db_path가 디렉터리면 자동 감지)을 써야 한다.
     db_path = tmp_path / "test.duckdb"
     writer = db.connect(db_path)
     writer.execute(
@@ -49,6 +49,33 @@ def test_connect_read_only_rejects_writes(tmp_path):
     with pytest.raises(duckdb.Error):
         reader.execute("INSERT INTO decisions (decision_id, ticker, buy_price, status) VALUES ('d1', '005930', 70000, 'open')")
     reader.close()
+
+
+def test_connect_import_from_export_directory(tmp_path):
+    # 2026-08-21: writer가 계속 열려있는 동안은 read_only=True조차 막힌다(실측 확인) — 상시
+    # 데몬처럼 writer가 절대 안 닫히는 상황에서 안전하게 조회하려면, writer 자신의 커넥션으로
+    # EXPORT DATABASE를 내보낸 디렉터리를 읽어야 한다. connect()는 db_path가 디렉터리면 이
+    # 스냅샷으로 보고 :memory: DB에 IMPORT DATABASE한 독립 사본을 돌려준다.
+    db_path = tmp_path / "live.duckdb"
+    writer = db.connect(db_path)
+    writer.execute(
+        "INSERT INTO decisions (decision_id, ticker, buy_price, status) VALUES ('d1', '005930', 70000, 'open')"
+    )
+
+    export_dir = tmp_path / "export_snapshot"
+    export_dir.mkdir()
+    writer.execute(f"EXPORT DATABASE '{export_dir.as_posix()}' (FORMAT PARQUET)")
+
+    # writer가 아직 열려있는 채로 스냅샷 디렉터리를 통해 조회 — 라이브 파일 자체는 여전히 잠겨있다.
+    with pytest.raises(duckdb.Error):
+        db.connect(db_path, read_only=True)
+
+    reader = db.connect(export_dir)
+    row = reader.execute("SELECT ticker, buy_price, status FROM decisions WHERE decision_id = 'd1'").fetchone()
+    reader.close()
+    writer.close()
+
+    assert row == ("005930", 70000, "open")
 
 
 def test_save_run_persists_params_as_json(conn):
