@@ -24,11 +24,17 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
 TOKEN_EXPIRY_BUFFER = timedelta(minutes=5)
 """만료시각(expires_dt) 이 안전마진 전이면 이미 만료된 것으로 취급해 미리 재발급한다."""
+
+_KST = ZoneInfo("Asia/Seoul")
+"""expires_dt는 키움이 KST 벽시계 기준으로 내려준다 — NAS 컨테이너는 TZ 미설정으로 UTC라서
+naive datetime.now()와 그대로 비교하면 최대 9시간까지 "아직 유효함"으로 오판한다(2026-08-20,
+WebSocket 재연결이 이미 만료된 토큰으로 몇 시간씩 8005를 반복)."""
 
 ACCOUNT_TR_URL_PATH = "/api/dostk/acnt"
 ORDER_TR_URL_PATH = "/api/dostk/ordr"
@@ -110,10 +116,10 @@ class KiwoomRestClient:
         있었다(2026-08-18) — 발급 시점에 None 체크만 하고 만료시각을 아예 확인하지 않던 게 원인.
         """
         try:
-            expires_at = datetime.strptime(self._token.expires_dt, "%Y%m%d%H%M%S")
+            expires_at = datetime.strptime(self._token.expires_dt, "%Y%m%d%H%M%S").replace(tzinfo=_KST)
         except (ValueError, TypeError):
             return True
-        return datetime.now() >= expires_at - TOKEN_EXPIRY_BUFFER
+        return datetime.now(_KST) >= expires_at - TOKEN_EXPIRY_BUFFER
 
     @property
     def token(self) -> AccessToken:
