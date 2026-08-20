@@ -24,6 +24,7 @@ from rich_stock.broker.kiwoom_rest import (
     place_buy_order_us,
     place_sell_order,
     place_sell_order_us,
+    query_account_valuation,
     query_current_price,
     query_current_price_us,
     query_deposit,
@@ -103,6 +104,29 @@ def test_query_holdings_parses_kt00018_response():
     assert h["매입가"] == 124500
     assert h["현재가"] == 59000
     assert h["평가손익"] == -196888
+    client.request_tr.assert_called_once_with("kt00018", {"qry_tp": "1", "dmst_stex_tp": "KRX"})
+
+
+def test_query_account_valuation_parses_kt00018_totals():
+    # query_holdings와 같은 TR(kt00018)이지만 종목별 리스트가 아니라 계좌 전체 합계 필드를 본다.
+    response = {
+        "tot_pur_amt": "000000017598258",
+        "tot_evlt_amt": "000000017401370",
+        "tot_evlt_pl": "-00000000196888",
+        "tot_prft_rt": "-1.12",
+        "prsm_dpst_aset_amt": "000000082401370",
+        "acnt_evlt_remn_indv_tot": [],
+        "return_code": 0,
+        "return_msg": "조회가 완료되었습니다",
+    }
+    client = _make_client_with_mock_tr(response)
+    valuation = query_account_valuation(client)
+
+    assert valuation["총매입금액"] == 17598258
+    assert valuation["총평가금액"] == 17401370
+    assert valuation["총평가손익"] == -196888
+    assert valuation["총수익률(%)"] == "-1.12"
+    assert valuation["추정예탁자산"] == 82401370
     client.request_tr.assert_called_once_with("kt00018", {"qry_tp": "1", "dmst_stex_tp": "KRX"})
 
 
