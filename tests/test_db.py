@@ -1,3 +1,4 @@
+import duckdb
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,6 +20,35 @@ def conn(tmp_path):
 def test_connect_creates_schema(conn):
     tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
     assert {"runs", "signals", "trades", "decisions", "auto_positions"} <= tables
+
+
+def test_connect_read_only_can_query_existing_db(tmp_path):
+    # 2026-08-21: auto-trader-daemon이 상시로 DB를 쓰기모드로 열어두면, review_*.py 같은
+    # 조회 전용 스크립트가 기본값(쓰기모드)으로 다시 연결을 시도할 때 파일 잠금 충돌이 난다
+    # (daily_watchlist.py가 8일간 조용히 이 방식으로 실패했던 것과 같은 원인) — read_only=True로
+    # 열면 이미 있는 DB를 문제없이 조회할 수 있어야 한다.
+    db_path = tmp_path / "test.duckdb"
+    writer = db.connect(db_path)
+    writer.execute(
+        "INSERT INTO decisions (decision_id, ticker, buy_price, status) VALUES ('d1', '005930', 70000, 'open')"
+    )
+    writer.close()
+
+    reader = db.connect(db_path, read_only=True)
+    row = reader.execute("SELECT ticker, buy_price, status FROM decisions WHERE decision_id = 'd1'").fetchone()
+    reader.close()
+
+    assert row == ("005930", 70000, "open")
+
+
+def test_connect_read_only_rejects_writes(tmp_path):
+    db_path = tmp_path / "test.duckdb"
+    db.connect(db_path).close()  # 파일만 먼저 만들어둠(스키마 보장)
+
+    reader = db.connect(db_path, read_only=True)
+    with pytest.raises(duckdb.Error):
+        reader.execute("INSERT INTO decisions (decision_id, ticker, buy_price, status) VALUES ('d1', '005930', 70000, 'open')")
+    reader.close()
 
 
 def test_save_run_persists_params_as_json(conn):

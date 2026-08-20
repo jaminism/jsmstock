@@ -133,8 +133,18 @@ CREATE TABLE IF NOT EXISTS auto_positions (
 """
 
 
-def connect(db_path: str | Path = DEFAULT_DB_PATH) -> duckdb.DuckDBPyConnection:
-    """DuckDB 파일에 연결하고(없으면 생성) 스키마를 보장한다."""
+def connect(db_path: str | Path = DEFAULT_DB_PATH, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """DuckDB 파일에 연결한다. read_only=False(기본값)면 없는 파일은 생성하고 스키마를 보장한다.
+
+    DuckDB는 파일 하나에 동시 writer를 하나만 허용한다 — auto-trader-daemon이 상시로 DB를
+    쓰기모드로 열어두는 지금(2026-08-21), review_*.py 같은 조회 전용 스크립트가 기본값(쓰기모드)
+    으로 연결을 시도하면 "Could not set lock on file" IOException으로 매번 실패한다
+    (daily_watchlist.py가 8/13~8/20 매일 조용히 이 방식으로 죽어있던 것과 같은 원인). 순수
+    조회 용도라면 read_only=True로 열어야 데몬이 떠 있어도 충돌 없이 동시 접속 가능하다.
+    read_only=True일 땐 파일이 이미 있다고 가정하고 디렉터리 생성/스키마 실행을 건너뛴다
+    (읽기 전용 연결로는 CREATE TABLE을 실행할 수 없다)."""
+    if read_only:
+        return duckdb.connect(str(db_path), read_only=True)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_path))
     conn.execute(_SCHEMA)
