@@ -36,6 +36,10 @@
       target_price는 상태에 따라 의미가 다르다: pending_entry 동안은 "감시 중인 목표 진입가"
       (create_pending_position/update_pending_entry_target_price), open이 되는 순간
       confirm_position_fill이 익절가로 덮어써 이후로는 청산 브라켓의 일부가 된다.
+      status='pending_exit'(2026-08-21 도입)는 손절/익절/보유기간만료 조건이 충족되어 시장가
+      매도 주문을 제출했지만 아직 체결이 확인되지 않은 상태다 — 시장가라도 하한가 등 유동성
+      부재로 즉시 안 잡힐 수 있어(update_pending_exit_order/get_pending_exit_positions), 주문
+      제출을 곧 체결로 간주하지 않는다(진입 쪽의 pending_entry→open 패턴과 대칭).
 """
 
 from __future__ import annotations
@@ -478,6 +482,22 @@ def confirm_position_fill(
     return decision_id
 
 
+def update_pending_exit_order(conn: duckdb.DuckDBPyConnection, position_id: str, exit_order_no: str, exit_reason: str) -> None:
+    """청산 조건(손절/익절/보유기간만료)이 충족되어 시장가 매도 주문을 낸 시점에 호출한다.
+    status를 'pending_exit'로 바꾸고 주문번호/사유를 기록할 뿐 아직 포지션을 닫지 않는다 —
+    실제 체결 확인(confirm_pending_exits)에서 close_position을 호출해야 비로소 닫힌다.
+    미체결로 재주문할 때도 이 함수를 다시 호출해 exit_order_no와 updated_at(재시도 타이머
+    기준)을 갱신한다."""
+    conn.execute(
+        """
+        UPDATE auto_positions
+        SET status = 'pending_exit', exit_order_no = ?, exit_reason = ?, updated_at = current_timestamp
+        WHERE position_id = ?
+        """,
+        [exit_order_no, exit_reason, position_id],
+    )
+
+
 def close_position(
     conn: duckdb.DuckDBPyConnection,
     position_id: str,
@@ -565,11 +585,22 @@ def get_open_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     return [dict(zip(cols, row)) for row in rows]
 
 
+def get_pending_exit_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
+    cols = [
+        "position_id", "ticker", "technique", "exit_order_no", "exit_reason",
+        "fill_price", "fill_quantity", "updated_at",
+    ]
+    rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'pending_exit'").fetchall()
+    return [dict(zip(cols, row)) for row in rows]
+
+
 def held_tickers(conn: duckdb.DuckDBPyConnection) -> set[str]:
-    """자동매매가 이미 진입 대기/보유 중인 종목 + 수동매매로 보유 중인 종목(decisions.status='open')
-    전부 합친 것 — 신규 후보 선정 시 중복 진입을 막는 데 쓴다."""
+    """자동매매가 이미 진입 대기/보유/청산 대기 중인 종목 + 수동매매로 보유 중인 종목
+    (decisions.status='open') 전부 합친 것 — 신규 후보 선정 시 중복 진입을 막는 데 쓴다.
+    pending_exit(청산 주문은 냈지만 체결 미확인)도 포함해야 한다 — 빠지면 매도 체결 확인 전에
+    같은 종목을 신규 진입 후보로 다시 집을 수 있다."""
     rows = conn.execute(
-        "SELECT ticker FROM auto_positions WHERE status IN ('pending_entry', 'open') "
+        "SELECT ticker FROM auto_positions WHERE status IN ('pending_entry', 'open', 'pending_exit') "
         "UNION SELECT ticker FROM decisions WHERE status = 'open'"
     ).fetchall()
     return {row[0] for row in rows}

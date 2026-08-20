@@ -310,6 +310,40 @@ def test_close_position_closes_linked_decision(conn):
     assert decision_row == ("closed", 74900)
 
 
+def test_update_pending_exit_order_sets_status_without_closing(conn):
+    # 2026-08-21: 시장가 매도 제출 시점에 곧바로 close_position을 부르면 실제 체결 확인 없이
+    # DB만 "청산 완료"로 믿게 된다(하한가 등으로 진짜 미체결일 위험) — 주문 제출은 이 함수로
+    # 'pending_exit'만 기록하고, 실제 체결 확인 후에만 close_position을 부르는 게 맞다.
+    position_id = db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, position_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+
+    db.update_pending_exit_order(conn, position_id, exit_order_no="000789", exit_reason="exit_stop")
+
+    row = conn.execute(
+        "SELECT status, exit_order_no, exit_reason FROM auto_positions WHERE position_id = ?", [position_id]
+    ).fetchone()
+    assert row == ("pending_exit", "000789", "exit_stop")
+    decision_row = conn.execute("SELECT status FROM decisions WHERE ticker = '005930'").fetchone()
+    assert decision_row[0] == "open"  # 체결 확인 전까지는 decisions도 아직 닫히면 안 됨
+
+
+def test_get_pending_exit_positions_filters_by_status(conn):
+    open_id = db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, open_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    exiting_id = db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, exiting_id, fill_price=50000, fill_quantity=5,
+                              stop_price=46500, target_price=53500, max_hold_trading_days=4)
+    db.update_pending_exit_order(conn, exiting_id, exit_order_no="000789", exit_reason="exit_target")
+
+    pending_exits = db.get_pending_exit_positions(conn)
+
+    assert [p["position_id"] for p in pending_exits] == [exiting_id]
+    assert pending_exits[0]["exit_order_no"] == "000789"
+    assert pending_exits[0]["fill_quantity"] == 5
+
+
 def test_expire_position_sets_status_without_decision(conn):
     position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
     db.expire_position(conn, position_id, note="entry_valid_days 초과")
@@ -402,6 +436,17 @@ def test_held_tickers_combines_auto_and_manual(conn):
     db.record_buy(conn, "035420", buy_price=200000)  # 수동매매로 보유중
 
     assert db.held_tickers(conn) == {"005930", "000660", "035420"}
+
+
+def test_held_tickers_includes_pending_exit(conn):
+    # 2026-08-21: 매도 체결 확인 전(pending_exit)에 같은 종목을 신규 진입 후보로 다시 집으면
+    # 안 된다 — 아직 계좌에 그 종목을 들고 있는 상태이므로 held_tickers에 남아있어야 한다.
+    exiting_id = db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, exiting_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    db.update_pending_exit_order(conn, exiting_id, exit_order_no="000789", exit_reason="exit_stop")
+
+    assert db.held_tickers(conn) == {"005930"}
 
 
 def test_count_open_positions_counts_decisions_open_status(conn):
