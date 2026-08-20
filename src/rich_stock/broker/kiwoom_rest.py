@@ -194,6 +194,21 @@ def query_deposit(client: KiwoomRestClient) -> dict:
     }
 
 
+def query_account_valuation(client: KiwoomRestClient) -> dict:
+    """kt00018(계좌평가잔고내역요청)의 계좌 전체 합계 필드만 정리해 반환한다. query_holdings와
+    같은 TR이지만 반환 형태가 다르다(종목별 리스트 vs 계좌 전체 합계) — 호출 목적이 서로 달라
+    (보유종목 표시 vs 계좌 현황 요약) 함수를 분리했다."""
+    data = client.request_tr("kt00018", {"qry_tp": "1", "dmst_stex_tp": "KRX"})
+    return {
+        "총매입금액": _parse_amount(data.get("tot_pur_amt")),
+        "총평가금액": _parse_amount(data.get("tot_evlt_amt")),
+        "총평가손익": _parse_amount(data.get("tot_evlt_pl")),
+        "총수익률(%)": data.get("tot_prft_rt"),
+        "추정예탁자산": _parse_amount(data.get("prsm_dpst_aset_amt")),
+        "_raw": data,
+    }
+
+
 def query_holdings(client: KiwoomRestClient) -> list[dict]:
     """kt00018(계좌평가잔고내역요청) — 보유종목 리스트. qry_tp="1"(합산)/dmst_stex_tp="KRX" 고정."""
     data = client.request_tr("kt00018", {"qry_tp": "1", "dmst_stex_tp": "KRX"})
