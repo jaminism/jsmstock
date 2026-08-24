@@ -417,6 +417,31 @@ def test_mark_position_error_sets_status_and_note(conn):
     assert row == ("error", "브로커 잔고와 불일치")
 
 
+def test_mark_position_error_also_closes_linked_open_decision(conn):
+    """decisions.status='open'인 채로 남으면 count_open_positions()의 슬롯을 영구 점유한다
+    (2026-08-13 dec_365660 실사고 — 신규 후보 선정이 11일간 안 돌았음)."""
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    decision_id = db.confirm_position_fill(
+        conn, position_id, fill_price=71000, fill_quantity=10,
+        stop_price=66030, target_price=75970, max_hold_trading_days=4,
+    )
+    assert db.count_open_positions(conn) == 1
+
+    db.mark_position_error(conn, position_id, "브로커 계좌와 불일치(reconcile)")
+
+    decision_row = conn.execute("SELECT status, note FROM decisions WHERE decision_id = ?", [decision_id]).fetchone()
+    assert decision_row == ("error", "브로커 계좌와 불일치(reconcile)")
+    assert db.count_open_positions(conn) == 0
+
+
+def test_mark_position_error_without_linked_decision_is_a_noop_on_decisions(conn):
+    """pending_entry(체결 전) 포지션은 decision_id가 없다 — decisions 테이블을 건드리면 안 된다."""
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
+    db.mark_position_error(conn, position_id, "브로커 잔고와 불일치")
+
+    assert conn.execute("SELECT count(*) FROM decisions").fetchone()[0] == 0
+
+
 def test_touch_position_updates_last_price_without_status_change(conn):
     position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit")
     db.touch_position(conn, position_id, last_price=71000)
