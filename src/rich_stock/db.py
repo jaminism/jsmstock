@@ -553,9 +553,23 @@ def expire_position(conn: duckdb.DuckDBPyConnection, position_id: str, note: str
 
 
 def mark_position_error(conn: duckdb.DuckDBPyConnection, position_id: str, note: str) -> None:
-    """브로커 실계좌와 DB 상태가 어긋나는 등 사람이 확인해야 하는 상황 — 자동 재개하지 않고 격리."""
+    """브로커 실계좌와 DB 상태가 어긋나는 등 사람이 확인해야 하는 상황 — 자동 재개하지 않고 격리.
+
+    연결된 decisions 행도 함께 'error'로 닫는다 — count_open_positions()이 max_positions
+    슬롯 계산에 decisions.status='open'만 쓰므로, 여기서 안 닫으면 이 포지션이 신규 진입 슬롯을
+    영구 점유한다(2026-08-13 실제 발생 — 8/13 reconcile 에러 이후 dec_365660이 decisions에서
+    'open'으로 남아 8/24까지 11일간 신규 후보 선정이 아예 실행되지 않았다, capacity가 계속
+    음수였음)."""
     conn.execute(
         "UPDATE auto_positions SET status = 'error', note = ?, updated_at = current_timestamp WHERE position_id = ?",
+        [note, position_id],
+    )
+    conn.execute(
+        """
+        UPDATE decisions SET status = 'error', note = ?, updated_at = current_timestamp
+        WHERE status = 'open'
+          AND decision_id = (SELECT decision_id FROM auto_positions WHERE position_id = ?)
+        """,
         [note, position_id],
     )
 
