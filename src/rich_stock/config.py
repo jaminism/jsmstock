@@ -29,13 +29,14 @@ class PortfolioConfig:
     hold_days: int = 4
     """매수일 포함 며칠차에는 보유 물량을 전량 매도(수익/손실 무관 강제 청산)."""
 
-    position_size_pct: float = 0.03
-    """1회 신규 진입 시 총자본 대비 투입 비중. risk-manager가 예시로 든 3% 수준을 기본값으로 채택."""
+    position_size_pct: float = 0.08
+    """1회 신규 진입 시 총자본 대비 투입 비중. 2026-08-26 사용자 결정으로 3%→8% 상향
+    (max_concurrent_positions=10 전량 진입 시 총 80% 배분 목표)."""
 
     addon_size_pct: float = 0.03
     """추가매수 시 추가로 투입하는 비중."""
 
-    max_position_pct: float = 0.06
+    max_position_pct: float = 0.11
     """단일 종목 노출 한도(초기 진입 + 추매 합산). position_size_pct + addon_size_pct 와 일치해야 함."""
 
     max_concurrent_positions: int = 10
