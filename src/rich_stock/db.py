@@ -641,6 +641,27 @@ def held_tickers(conn: duckdb.DuckDBPyConnection) -> set[str]:
     return {row[0] for row in rows}
 
 
+def held_tickers_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[str, set[str]]:
+    """held_tickers()와 같은 상태 집합(auto_positions의 pending_entry/open/pending_exit +
+    decisions.status='open')을 기법(소문자)별로 나눠서 반환한다. 2026-09-01 사용자 요청 —
+    S1/S2/S3/S4/S6(VALIDATION_TECHNIQUES) 실전검증에서 같은 종목을 S5나 서로 다른 기법이
+    먼저 보유하고 있어도 막지 않고, "같은 기법이 같은 종목을 중복으로 또 진입"하는 것만
+    막기 위해 auto_trader.py의 pick_new_candidates가 쓴다. decisions는 technique이 NULL일
+    수 있는 수동매매 레코드라(예: technique 없이 임의 매수) 그런 행은 어떤 기법과도 매칭되지
+    않아 이 함수 결과에서 빠진다 — held_tickers()(기법 무관 전체 차단)만큼 보수적이지는
+    않다는 한계가 있다."""
+    rows = conn.execute(
+        "SELECT lower(technique), ticker FROM auto_positions "
+        "WHERE status IN ('pending_entry', 'open', 'pending_exit') "
+        "UNION "
+        "SELECT lower(technique), ticker FROM decisions WHERE status = 'open' AND technique IS NOT NULL"
+    ).fetchall()
+    result: dict[str, set[str]] = {}
+    for technique, ticker in rows:
+        result.setdefault(technique, set()).add(ticker)
+    return result
+
+
 def count_open_positions(conn: duckdb.DuckDBPyConnection) -> int:
     """동시보유 한도(max_concurrent_positions) 체크용 — 자동/수동 매매가 슬롯을 공유하므로
     decisions.status='open' 기준으로 센다(auto_positions.pending_entry는 아직 미체결이라 제외)."""
