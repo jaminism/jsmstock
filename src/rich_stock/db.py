@@ -647,6 +647,17 @@ def count_open_positions(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.execute("SELECT count(*) FROM decisions WHERE status = 'open'").fetchone()[0]
 
 
+def count_active_positions_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """기법(소문자)별 현재 진입대기+보유+청산대기 건수 — 2026-09-01 실전검증(점수 대신 기법당
+    최대 동시보유 건수로 후보를 제한하는 방식)용으로 pick_new_candidates(auto_trader.py)가 쓴다.
+    held_tickers()와 동일한 상태 집합(pending_entry/open/pending_exit)을 기법별로 집계한다."""
+    rows = conn.execute(
+        "SELECT lower(technique), count(*) FROM auto_positions "
+        "WHERE status IN ('pending_entry', 'open', 'pending_exit') GROUP BY lower(technique)"
+    ).fetchall()
+    return {technique: count for technique, count in rows}
+
+
 def load_trades_csv(conn: duckdb.DuckDBPyConnection, run_id: str, technique: str, csv_path: str | Path) -> int:
     """트레이드 CSV(각 CLI 스크립트의 --trades-csv와 동일한 컬럼 구성)를 DuckDB에 적재한다.
 
