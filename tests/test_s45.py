@@ -1,3 +1,5 @@
+import dataclasses
+
 import pandas as pd
 
 from rich_stock.config import S4Config, S5Config
@@ -283,13 +285,17 @@ def test_k2_plus_no_entry_outside_window():
 
 
 def test_k2_plus_profit_target_plus_7_pct():
-    # entry level=11400(index2), target=11400*1.07=12198
+    # entry level=11400(index2), target=11400*1.07=12198 — profit_target_pct을 명시적으로
+    # 0.07로 고정한다(config 기본값이 2026-09-02 백테스트로 0.15로 바뀌어, 기본값에 기대면
+    # 이 합성 데이터의 고점(13000)이 새 타겟을 충족하는지 여부가 config 변경에 따라 달라짐 —
+    # 이 테스트의 의도는 "목표가 계산/도달 판정 로직"이지 현재 기본값이 몇인지가 아니다).
     opens = [10000, 10000, 11500, 12100, 12200]
     highs = [10000, 13000, 11600, 12300, 12400]
     lows = [9800, 11900, 11300, 12100, 12200]
     closes = [10000, 13000, 11450, 12250, 12350]
     df = make_df(opens, highs, lows, closes)
-    trades = backtest_ticker_s5(df, "TEST", S5Config())
+    config = dataclasses.replace(S5Config(), profit_target_pct=0.07)
+    trades = backtest_ticker_s5(df, "TEST", config)
     assert len(trades) == 1
     trade = trades[0]
     assert trade.fills[-1].reason == "exit_target_high"
