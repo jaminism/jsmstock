@@ -647,6 +647,16 @@ def count_open_positions(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.execute("SELECT count(*) FROM decisions WHERE status = 'open'").fetchone()[0]
 
 
+def count_open_positions_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """count_open_positions()와 동일한 기준(decisions.status='open', 미체결 pending 제외)을
+    기법(소문자)별로 나눠 센다. 2026-09-01 S5/기타기법 동시보유 풀 분리(auto_trader.py의
+    slow_tick — S5 전용 한도와 나머지 5개 기법 합산 한도를 독립적으로 관리)용으로 추가했다."""
+    rows = conn.execute(
+        "SELECT lower(technique), count(*) FROM decisions WHERE status = 'open' GROUP BY lower(technique)"
+    ).fetchall()
+    return {technique: count for technique, count in rows}
+
+
 def count_active_positions_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """기법(소문자)별 현재 진입대기+보유+청산대기 건수 — 2026-09-01 실전검증(점수 대신 기법당
     최대 동시보유 건수로 후보를 제한하는 방식)용으로 pick_new_candidates(auto_trader.py)가 쓴다.
