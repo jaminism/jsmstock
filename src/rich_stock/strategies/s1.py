@@ -70,8 +70,8 @@ def detect_s1_signals(df: pd.DataFrame, config: S1Config) -> list[S1Signal]:
         if config.qualitative_filter_enabled and qual.score < config.qualitative_score_threshold:
             continue
 
-        a = df["High"].iloc[i]  # R0 기준 = 상한가일 고가
-        b = df["PrevClose"].iloc[i]  # R3 기준 = 상한가 발생 전일 종가
+        a = float(df["High"].iloc[i])  # R0 기준 = 상한가일 고가
+        b = float(df["PrevClose"].iloc[i])  # R3 기준 = 상한가 발생 전일 종가
         ab = (a - b) / config.grid_divisions
         signals.append(
             S1Signal(
