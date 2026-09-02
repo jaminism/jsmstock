@@ -354,6 +354,27 @@ def test_confirm_position_fill_raises_for_unknown_position(conn):
                                   stop_price=None, target_price=None, max_hold_trading_days=None)
 
 
+def test_confirm_position_fill_rolls_back_decision_when_update_fails(conn):
+    # 2026-09-01 실사고 재현: UPDATE auto_positions가 실패하면(당시엔 stop_price/target_price에
+    # numpy 타입이 섞여 바인딩 에러) record_buy가 만든 decisions row만 커밋된 채 남았고, 다음
+    # tick 재시도마다 새 decisions row가 또 생겨 같은 포지션에 중복 'open' decision이 31건
+    # 쌓였다. 이제는 둘이 한 트랜잭션이라 UPDATE 실패 시 decisions row도 함께 롤백돼야 한다.
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit",
+    )
+    with pytest.raises(duckdb.Error):
+        db.confirm_position_fill(
+            conn, position_id, fill_price=70000, fill_quantity=10,
+            stop_price=65100, target_price=74900,
+            max_hold_trading_days="not-a-number",  # INTEGER 컬럼에 문자열 → UPDATE가 실패해야 함
+        )
+
+    assert conn.execute("SELECT count(*) FROM decisions WHERE ticker = '005930'").fetchone()[0] == 0
+    pos_row = conn.execute("SELECT status, decision_id FROM auto_positions WHERE position_id = ?", [position_id]).fetchone()
+    assert pos_row[0] == "pending_entry"
+    assert pos_row[1] is None
+
+
 def test_close_position_closes_linked_decision(conn):
     position_id = db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
     db.confirm_position_fill(conn, position_id, fill_price=70000, fill_quantity=10,

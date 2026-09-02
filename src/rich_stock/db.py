@@ -485,21 +485,32 @@ def confirm_position_fill(
     if row is None:
         raise ValueError(f"position_id를 찾을 수 없습니다: {position_id}")
     ticker, technique, signal_date = row
-    decision_id = record_buy(
-        conn, ticker, fill_price, technique=technique, signal_date=str(signal_date) if signal_date else None,
-        buy_date=fill_date, quantity=fill_quantity, note="auto_trader",
-    )
-    conn.execute(
-        """
-        UPDATE auto_positions
-        SET decision_id = ?, status = 'open', fill_price = ?, fill_quantity = ?,
-            fill_date = COALESCE(?, current_date), stop_price = ?, target_price = ?,
-            max_hold_trading_days = ?, is_safety_override = ?, updated_at = current_timestamp
-        WHERE position_id = ?
-        """,
-        [decision_id, fill_price, fill_quantity, fill_date, stop_price, target_price,
-         max_hold_trading_days, is_safety_override, position_id],
-    )
+    # decisions row 생성과 auto_positions UPDATE를 한 트랜잭션으로 묶는다 — 이전엔 둘이 분리돼
+    # 있어서, UPDATE가 실패하면(예: stop_price/target_price에 numpy 타입이 섞여 바인딩 에러)
+    # decisions row만 커밋된 채 남고, 다음 tick의 재시도가 매번 새 decisions row를 또 만들어
+    # 같은 포지션에 대해 중복 'open' decision이 수십 개 쌓이는 사고(2026-09-01, S1/361610,
+    # 실제 auto_positions는 1건인데 decisions는 31건)가 있었다.
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        decision_id = record_buy(
+            conn, ticker, fill_price, technique=technique, signal_date=str(signal_date) if signal_date else None,
+            buy_date=fill_date, quantity=fill_quantity, note="auto_trader",
+        )
+        conn.execute(
+            """
+            UPDATE auto_positions
+            SET decision_id = ?, status = 'open', fill_price = ?, fill_quantity = ?,
+                fill_date = COALESCE(?, current_date), stop_price = ?, target_price = ?,
+                max_hold_trading_days = ?, is_safety_override = ?, updated_at = current_timestamp
+            WHERE position_id = ?
+            """,
+            [decision_id, fill_price, fill_quantity, fill_date, stop_price, target_price,
+             max_hold_trading_days, is_safety_override, position_id],
+        )
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
     return decision_id
 
 
