@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS auto_positions (
     order_style VARCHAR,
     entry_order_no VARCHAR,
     entry_valid_until_trading_day INTEGER,
+    requested_quantity DOUBLE,
     fill_price DOUBLE,
     fill_quantity DOUBLE,
     fill_date DATE,
@@ -159,6 +160,9 @@ def connect(db_path: str | Path = DEFAULT_DB_PATH, read_only: bool = False) -> d
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(str(db_path))
     conn.execute(_SCHEMA)
+    # CREATE TABLE IF NOT EXISTS는 기존 파일의 스키마를 갱신하지 않으므로, 이미 만들어진 DB에
+    # 새 컬럼을 추가할 때는 별도 ALTER가 필요하다(2026-09-03, requested_quantity 도입 때 확인).
+    conn.execute("ALTER TABLE auto_positions ADD COLUMN IF NOT EXISTS requested_quantity DOUBLE")
     return conn
 
 
@@ -447,11 +451,20 @@ def create_pending_position(
     return position_id
 
 
-def update_pending_entry_order(conn: duckdb.DuckDBPyConnection, position_id: str, entry_order_no: str) -> None:
-    """진입 조건(목표가 허용범위 진입)이 충족되어 실제로 주문을 낸 시점에 주문번호를 기록한다."""
+def update_pending_entry_order(
+    conn: duckdb.DuckDBPyConnection, position_id: str, entry_order_no: str, requested_quantity: float | None = None,
+) -> None:
+    """진입 조건(목표가 허용범위 진입)이 충족되어 실제로 주문을 낸 시점에 주문번호를 기록한다.
+
+    requested_quantity(2026-09-03 추가)는 그 시점에 우리가 실제로 요청한 주문 수량이다 —
+    confirm_triggered_entries가 나중에 체결 완료 여부를 판정할 때, 브로커 API를 재조회해 받는
+    "주문수량" 필드(대량 주문 직후에는 아직 안정화되지 않아 축소된 값을 반환할 수 있음이 실측
+    확인됨, 원익/032940 사례: 1147주 주문인데 36초 후 재조회 시 40주로 보여 그 시점에서
+    "전량체결"로 오판)보다, 우리가 직접 알고 있는 이 값을 신뢰하기 위해 저장해둔다."""
     conn.execute(
-        "UPDATE auto_positions SET entry_order_no = ?, updated_at = current_timestamp WHERE position_id = ?",
-        [entry_order_no, position_id],
+        "UPDATE auto_positions SET entry_order_no = ?, requested_quantity = ?, updated_at = current_timestamp "
+        "WHERE position_id = ?",
+        [entry_order_no, requested_quantity, position_id],
     )
 
 
@@ -615,7 +628,7 @@ def decrement_pending_entry_validity(conn: duckdb.DuckDBPyConnection) -> list[st
 def get_pending_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [
         "position_id", "ticker", "technique", "signal_date", "order_style",
-        "entry_order_no", "entry_valid_until_trading_day", "target_price", "updated_at",
+        "entry_order_no", "entry_valid_until_trading_day", "target_price", "requested_quantity", "updated_at",
     ]
     rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'pending_entry'").fetchall()
     return [dict(zip(cols, row)) for row in rows]

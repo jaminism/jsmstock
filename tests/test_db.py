@@ -308,6 +308,19 @@ def test_update_pending_entry_order_replaces_order_no(conn):
     assert row[0] == "000002"
 
 
+def test_update_pending_entry_order_persists_requested_quantity(conn):
+    """2026-09-03 추가 — 주문 제출 시점에 실제 요청한 수량을 저장해둬야, 나중에 체결 확인
+    단계에서 브로커 API의 불안정한 스냅샷 대신 이 값을 완료 판정 기준으로 쓸 수 있다."""
+    position_id = db.create_pending_position(
+        conn, "005930", technique="S5", signal_date="2026-08-01", order_style="fixed_limit",
+    )
+    db.update_pending_entry_order(conn, position_id, "000123", requested_quantity=1147)
+    row = conn.execute(
+        "SELECT entry_order_no, requested_quantity FROM auto_positions WHERE position_id = ?", [position_id],
+    ).fetchone()
+    assert row == ("000123", 1147)
+
+
 def test_create_pending_position_stores_entry_target_price(conn):
     position_id = db.create_pending_position(
         conn, "005930", technique="S5", signal_date="2026-08-01",
