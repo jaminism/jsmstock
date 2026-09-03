@@ -162,7 +162,18 @@ def connect(db_path: str | Path = DEFAULT_DB_PATH, read_only: bool = False) -> d
     conn.execute(_SCHEMA)
     # CREATE TABLE IF NOT EXISTS는 기존 파일의 스키마를 갱신하지 않으므로, 이미 만들어진 DB에
     # 새 컬럼을 추가할 때는 별도 ALTER가 필요하다(2026-09-03, requested_quantity 도입 때 확인).
-    conn.execute("ALTER TABLE auto_positions ADD COLUMN IF NOT EXISTS requested_quantity DOUBLE")
+    #
+    # **컬럼 존재 여부를 먼저 확인하고 필요할 때만 ALTER 실행(2026-09-03 수정)**: 처음엔
+    # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`를 connect()마다 무조건 실행했다 — 컬럼이
+    # 이미 있어 SQL 결과상 no-op이어도 DuckDB는 이 구문을 WAL에 계속 새로 기록하는 것으로
+    # 보이고(실측), 데몬이 정상 종료 없이(docker restart의 SIGTERM 등) 죽으면 그 WAL 항목이
+    # 커밋되지 않은 채 남는다. 다음 기동 시 DuckDB가 그 WAL을 재생하다가 내부 오류
+    # ("Calling DatabaseManager::GetDefaultDatabase with no default database set")로
+    # 크래시하는 사고가 실제로 발생했다(9/3, 데몬이 아예 뜨지 못하는 상태까지 감). 컬럼이 이미
+    # 있으면 ALTER 자체를 실행하지 않아야 이 WAL 항목 자체가 생기지 않는다.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info('auto_positions')").fetchall()}
+    if "requested_quantity" not in existing_cols:
+        conn.execute("ALTER TABLE auto_positions ADD COLUMN requested_quantity DOUBLE")
     return conn
 
 
