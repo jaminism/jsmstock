@@ -308,6 +308,25 @@ def test_update_pending_entry_order_replaces_order_no(conn):
     assert row[0] == "000002"
 
 
+def test_connect_reopen_does_not_reissue_alter_for_existing_column(tmp_path):
+    """2026-09-03 실전 사고 재현 방지용 — connect()가 매번 ALTER TABLE ... ADD COLUMN IF NOT
+    EXISTS를 무조건 실행하면(컬럼이 이미 있어도), 그 구문 자체가 매번 WAL에 기록되는 것으로
+    보였다. 데몬이 비정상 종료되면 커밋 안 된 그 WAL 항목을 다음 기동 시 재생하다가 DuckDB
+    내부 오류로 크래시하는 사고가 실제로 발생했다. connect()를 반복 호출해도(=매번 새
+    커넥션을 여는 것과 동일 상황) 컬럼이 이미 존재하면 ALTER를 다시 실행하지 않아야 한다."""
+    db_path = tmp_path / "test.duckdb"
+    conn1 = db.connect(db_path)
+    conn1.close()
+
+    # 두 번째 연결 — requested_quantity 컬럼이 이미 있으므로 ALTER를 실행하지 않아야 함
+    conn2 = db.connect(db_path)
+    try:
+        cols = {row[1] for row in conn2.execute("PRAGMA table_info('auto_positions')").fetchall()}
+        assert "requested_quantity" in cols
+    finally:
+        conn2.close()
+
+
 def test_update_pending_entry_order_persists_requested_quantity(conn):
     """2026-09-03 추가 — 주문 제출 시점에 실제 요청한 수량을 저장해둬야, 나중에 체결 확인
     단계에서 브로커 API의 불안정한 스냅샷 대신 이 값을 완료 판정 기준으로 쓸 수 있다."""
