@@ -653,7 +653,7 @@ def get_open_positions(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     cols = [
         "position_id", "decision_id", "ticker", "technique", "fill_price", "fill_quantity",
         "stop_price", "target_price", "max_hold_trading_days", "trading_days_held", "is_safety_override",
-        "last_price",
+        "last_price", "entry_order_no", "fill_date",
     ]
     rows = conn.execute(f"SELECT {', '.join(cols)} FROM auto_positions WHERE status = 'open'").fetchall()
     return [dict(zip(cols, row)) for row in rows]

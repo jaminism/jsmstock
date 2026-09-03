@@ -563,9 +563,11 @@ def test_get_pending_positions_and_get_open_positions(conn):
     pending_id = db.create_pending_position(
         conn, "005930", technique="S1", signal_date="2026-08-01", order_style="fixed_limit", entry_target_price=68000,
     )
-    open_id = db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit")
+    open_id = db.create_pending_position(
+        conn, "000660", technique="S5", signal_date="2026-08-01", order_style="fixed_limit", entry_order_no="000123",
+    )
     db.confirm_position_fill(conn, open_id, fill_price=50000, fill_quantity=5,
-                              stop_price=46500, target_price=53500, max_hold_trading_days=4)
+                              stop_price=46500, target_price=53500, max_hold_trading_days=4, fill_date="2026-08-02")
 
     pending = db.get_pending_positions(conn)
     open_ = db.get_open_positions(conn)
@@ -574,6 +576,10 @@ def test_get_pending_positions_and_get_open_positions(conn):
     assert pending[0]["target_price"] == 68000
     assert [p["position_id"] for p in open_] == [open_id]
     assert open_[0]["stop_price"] == 46500
+    # 2026-09-03 추가 — reconcile_with_broker의 자동진단(_diagnose_qty_mismatch)이 이 두
+    # 필드로 kt00009를 재조회해 실제체결과 대조하므로 get_open_positions가 꼭 반환해야 함.
+    assert open_[0]["entry_order_no"] == "000123"
+    assert str(open_[0]["fill_date"]) == "2026-08-02"
 
 
 def test_held_tickers_combines_auto_and_manual(conn):
