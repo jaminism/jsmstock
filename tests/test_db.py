@@ -308,6 +308,19 @@ def test_update_pending_entry_order_replaces_order_no(conn):
     assert row[0] == "000002"
 
 
+def test_connect_checkpoints_alter_so_no_wal_entry_survives(tmp_path):
+    """2026-09-03 실전 사고의 진짜 원인 — 컬럼 존재 여부를 먼저 확인하는 수정(바로 아래 테스트)
+    만으로는 부족했다. ALTER가 메인 DB 파일에 한 번도 체크포인트되지 않고 WAL에만 남아있으면,
+    매 기동마다 "컬럼 없음"으로 잘못 판정돼 계속 재실행됐다(비정상 종료 시 그 WAL 항목이 재생
+    크래시로 이어짐). ALTER 직후 CHECKPOINT를 호출해 WAL을 즉시 비워야 한다."""
+    db_path = tmp_path / "test.duckdb"
+    conn = db.connect(db_path)
+    conn.close()
+
+    wal_path = db_path.with_name(db_path.name + ".wal")
+    assert not wal_path.exists() or wal_path.stat().st_size == 0
+
+
 def test_connect_reopen_does_not_reissue_alter_for_existing_column(tmp_path):
     """2026-09-03 실전 사고 재현 방지용 — connect()가 매번 ALTER TABLE ... ADD COLUMN IF NOT
     EXISTS를 무조건 실행하면(컬럼이 이미 있어도), 그 구문 자체가 매번 WAL에 기록되는 것으로
