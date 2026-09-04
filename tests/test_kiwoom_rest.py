@@ -55,6 +55,15 @@ def _make_client_with_mock_tr(response: dict) -> KiwoomRestClient:
     return client
 
 
+def _make_client_with_mock_tr_pages(*pages: tuple[dict, dict]) -> KiwoomRestClient:
+    """query_order_status처럼 request_tr_with_headers(연속조회 지원)를 쓰는 함수용 — 페이지별
+    (본문, 응답헤더) 튜플을 순서대로 반환한다. 헤더를 안 주면 cont-yn 없음(마지막 페이지)으로 처리."""
+    client = KiwoomRestClient(KiwoomCredentials(appkey="x", secretkey="y"))
+    normalized = [(body, headers or {}) for body, headers in pages]
+    client.request_tr_with_headers = MagicMock(side_effect=normalized)
+    return client
+
+
 def test_query_deposit_parses_kt00001_response():
     # 스펙 문서(kt00001)의 responseExample을 그대로 축약해 사용
     response = {
@@ -268,6 +277,8 @@ def test_request_tr_reissues_token_and_retries_on_8005():
 
     def fake_post(url, **kwargs):
         class FakeResponse:
+            headers: dict = {}
+
             def raise_for_status(self):
                 pass
 
@@ -599,7 +610,7 @@ def test_query_order_status_parses_fully_filled_order():
         ],
         "return_code": 0, "return_msg": "조회가 완료되었습니다",
     }
-    client = _make_client_with_mock_tr(response)
+    client = _make_client_with_mock_tr_pages((response, {}))
 
     result = query_order_status(client, ticker="069500")
 
@@ -611,10 +622,11 @@ def test_query_order_status_parses_fully_filled_order():
     assert row["체결단가"] == 4900
     assert row["미체결수량"] == 0
     assert row["전량체결"] is True
-    client.request_tr.assert_called_once_with(
+    client.request_tr_with_headers.assert_called_once_with(
         "kt00009",
         {"ord_dt": "", "stk_bond_tp": "0", "mrkt_tp": "0", "sell_tp": "0", "qry_tp": "0",
          "stk_cd": "069500", "fr_ord_no": "", "dmst_stex_tp": "KRX"},
+        cont_yn="N", next_key="",
     )
 
 
@@ -626,7 +638,7 @@ def test_query_order_status_detects_partial_fill():
         ],
         "return_code": 0, "return_msg": "조회가 완료되었습니다",
     }
-    client = _make_client_with_mock_tr(response)
+    client = _make_client_with_mock_tr_pages((response, {}))
 
     row = query_order_status(client)[0]
 
@@ -638,5 +650,55 @@ def test_query_order_status_detects_partial_fill():
 
 def test_query_order_status_empty_list_when_no_orders():
     response = {"acnt_ord_cntr_prst_array": [], "return_code": 0, "return_msg": "조회완료"}
-    client = _make_client_with_mock_tr(response)
+    client = _make_client_with_mock_tr_pages((response, {}))
     assert query_order_status(client) == []
+
+
+def test_query_order_status_follows_pagination_across_multiple_pages():
+    """2026-09-04 페이지네이션 버그 수정 — cont-yn=Y/next-key가 오면 계속 이어서 조회해
+    전부 모아야 한다(041190 28회 재주문이 30건짜리 첫 페이지를 다 채워 이른 시각 주문인
+    0039P0가 통째로 누락됐던 실전 사고, [[project_auto_trader_0039p0_qty_mismatch_20260904]])."""
+    page1 = (
+        {
+            "acnt_ord_cntr_prst_array": [
+                {"ord_no": "0008150", "stk_cd": "A041190", "stk_nm": "우리기술투자",
+                 "ord_qty": "0000001381", "cntr_qty": "0000001381", "cntr_uv": "0000006400"}
+            ],
+            "return_code": 0, "return_msg": "조회가 완료되었습니다",
+        },
+        {"cont-yn": "Y", "next-key": "NEXTPAGE1"},
+    )
+    page2 = (
+        {
+            "acnt_ord_cntr_prst_array": [
+                {"ord_no": "0004210", "stk_cd": "A0039P0", "stk_nm": "매드업",
+                 "ord_qty": "0000000991", "cntr_qty": "0000000991", "cntr_uv": "0000007890"}
+            ],
+            "return_code": 0, "return_msg": "조회가 완료되었습니다",
+        },
+        {"cont-yn": "N", "next-key": ""},
+    )
+    client = _make_client_with_mock_tr_pages(page1, page2)
+
+    result = query_order_status(client, order_date="20260904")
+
+    assert [row["주문번호"] for row in result] == ["0008150", "0004210"]
+    assert result[1]["체결수량"] == 991
+    assert client.request_tr_with_headers.call_count == 2
+    first_call, second_call = client.request_tr_with_headers.call_args_list
+    assert first_call.kwargs == {"cont_yn": "N", "next_key": ""}
+    assert second_call.kwargs == {"cont_yn": "Y", "next_key": "NEXTPAGE1"}
+
+
+def test_query_order_status_stops_without_next_key_even_if_cont_yn_says_yes():
+    """next-key가 비어있으면 cont-yn이 Y라고 우겨도 멈춘다 — 무한루프 방지 안전판."""
+    page1 = (
+        {"acnt_ord_cntr_prst_array": [], "return_code": 0, "return_msg": "조회완료"},
+        {"cont-yn": "Y", "next-key": ""},
+    )
+    client = _make_client_with_mock_tr_pages(page1)
+
+    result = query_order_status(client)
+
+    assert result == []
+    assert client.request_tr_with_headers.call_count == 1

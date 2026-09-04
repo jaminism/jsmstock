@@ -143,7 +143,25 @@ class KiwoomRestClient:
         cont_yn/next_key는 연속조회(페이지네이션)용 — 응답 헤더의 값을 다음 호출에 그대로 넘기면
         이어서 조회된다. 첫 호출은 기본값(N, 빈 문자열)이면 된다. url_path는 계좌조회(기본값,
         ACCOUNT_TR_URL_PATH)와 주문(ORDER_TR_URL_PATH)이 서로 다른 엔드포인트를 쓰기 때문에 뒀다.
-        """
+
+        연속조회 여부를 직접 확인해야 하면(다음 페이지가 더 있는지) request_tr_with_headers를 쓸 것
+        — 이 함수는 하위호환을 위해 본문만 반환한다."""
+        data, _headers = self.request_tr_with_headers(api_id, body, cont_yn=cont_yn, next_key=next_key, url_path=url_path)
+        return data
+
+    def request_tr_with_headers(
+        self, api_id: str, body: dict, cont_yn: str = "N", next_key: str = "", url_path: str = ACCOUNT_TR_URL_PATH
+    ) -> tuple[dict, dict]:
+        """request_tr과 동일하되 응답 헤더도 함께 반환한다.
+
+        **2026-09-04 추가**: kt00009(계좌별주문체결현황요청) 같은 목록형 TR은 하루 주문이
+        많으면(실측: 30건 초과, 041190 유동성 부족으로 인한 28회 재주문 등) 한 번의 호출로
+        전부 돌아오지 않고 최근 것부터 일부만 잘려서 온다 — 응답 헤더의 cont-yn(연속조회여부)/
+        next-key(연속조회키)를 읽어야 "더 있는지"와 "다음 페이지 조회 키"를 알 수 있는데,
+        request_tr()은 본문(JSON)만 반환하고 헤더를 버려서 호출자가 이걸 아예 알 방법이
+        없었다(query_order_status가 페이지네이션을 전혀 안 하고 있었던 근본 원인 —
+        [[project_auto_trader_0039p0_qty_mismatch_20260904]]). 이 함수로 헤더까지 노출해
+        query_order_status가 직접 루프를 돌 수 있게 한다."""
         headers = {
             **self.auth_headers(),
             "api-id": api_id,
@@ -164,9 +182,9 @@ class KiwoomRestClient:
                 data = resp.json()
                 if data.get("return_code", 0) != 0:
                     raise RuntimeError(f"[{api_id}] TR 실패(토큰 재발급 후 재시도까지): {data.get('return_msg')} (전체 응답: {data})")
-                return data
+                return data, resp.headers
             raise RuntimeError(f"[{api_id}] TR 실패: {data.get('return_msg')} (전체 응답: {data})")
-        return data
+        return data, resp.headers
 
 
 def _parse_amount(raw: str) -> int:
@@ -228,6 +246,11 @@ def query_holdings(client: KiwoomRestClient) -> list[dict]:
     return holdings
 
 
+MAX_ORDER_STATUS_PAGES = 20
+"""query_order_status 연속조회 안전판 — 페이지당 최대 관측치(30건) 기준으로도 하루 600건이면
+넉넉하다. API가 cont-yn을 계속 "Y"로 돌려주는 이상동작 시 무한루프를 막기 위한 상한."""
+
+
 def query_order_status(
     client: KiwoomRestClient, order_date: str | None = None, ticker: str | None = None, from_order_no: str | None = None
 ) -> list[dict]:
@@ -235,10 +258,17 @@ def query_order_status(
     실제 체결 여부/수량/가격을 알 수 없어서(place_buy_order 등은 접수 응답만 반환), 자동매매가
     "진짜 체결됐는지"를 확인하려면 이 함수로 재조회해야 한다.
 
-    order_date를 생략하면 당일 전체, ticker/from_order_no로 좁혀서 조회할 수 있다(from_order_no는
-    "그 번호부터 이후"라 정확히 그 주문 하나만 보려면 반환된 리스트에서 "주문번호"로 다시 필터링
-    할 것). 종목당 여러 주문이 있으면 여러 행이 반환된다.
-    """
+    order_date를 생략하면 당일 전체, ticker로 좁혀서 조회할 수 있다. from_order_no는 스펙상
+    "그 번호 이전 주문은 조회 안 됨"이라는 하한 필터일 뿐 연속조회 메커니즘이 아니다(실측 확인 —
+    낮은 번호를 넘겨도 결과가 그대로였음). 종목당 여러 주문이 있으면 여러 행이 반환된다.
+
+    **연속조회(2026-09-04 추가, 페이지네이션 버그 수정)**: 한 번의 호출은 최근 것부터 최대
+    30건 정도만 돌아온다(실측 확인) — 그날 주문이 많으면(041190 유동성 부족으로 28회 재주문
+    등) 이른 시각의 주문이 응답에서 통째로 빠진다. 이 상태로 confirm_triggered_entries가
+    체결 확인을 못 하거나(주문을 못 찾아 계속 스킵) reconcile_with_broker의 자동진단이
+    "주문번호를 못 찾음"으로 오탐하는 사고가 실전에서 발생했다
+    ([[project_auto_trader_0039p0_qty_mismatch_20260904]]). 응답 헤더의 cont-yn이 "Y"인 동안
+    next-key를 그대로 다음 요청에 실어 보내 전부 모은다."""
     body = {
         "ord_dt": order_date or "",
         "stk_bond_tp": "0",
@@ -249,24 +279,29 @@ def query_order_status(
         "fr_ord_no": from_order_no or "",
         "dmst_stex_tp": "KRX",
     }
-    data = client.request_tr("kt00009", body)
     results = []
-    for row in data.get("acnt_ord_cntr_prst_array", []):
-        ord_qty = _parse_amount(row.get("ord_qty"))
-        cntr_qty = _parse_amount(row.get("cntr_qty"))
-        results.append(
-            {
-                "주문번호": row.get("ord_no"),
-                "종목코드": row.get("stk_cd"),
-                "종목명": row.get("stk_nm"),
-                "주문수량": ord_qty,
-                "체결수량": cntr_qty,
-                "체결단가": _parse_amount(row.get("cntr_uv")),
-                "미체결수량": max(ord_qty - cntr_qty, 0),
-                "전량체결": ord_qty > 0 and cntr_qty >= ord_qty,
-                "_raw": row,
-            }
-        )
+    cont_yn, next_key = "N", ""
+    for _ in range(MAX_ORDER_STATUS_PAGES):
+        data, headers = client.request_tr_with_headers("kt00009", body, cont_yn=cont_yn, next_key=next_key)
+        for row in data.get("acnt_ord_cntr_prst_array", []):
+            ord_qty = _parse_amount(row.get("ord_qty"))
+            cntr_qty = _parse_amount(row.get("cntr_qty"))
+            results.append(
+                {
+                    "주문번호": row.get("ord_no"),
+                    "종목코드": row.get("stk_cd"),
+                    "종목명": row.get("stk_nm"),
+                    "주문수량": ord_qty,
+                    "체결수량": cntr_qty,
+                    "체결단가": _parse_amount(row.get("cntr_uv")),
+                    "미체결수량": max(ord_qty - cntr_qty, 0),
+                    "전량체결": ord_qty > 0 and cntr_qty >= ord_qty,
+                    "_raw": row,
+                }
+            )
+        if headers.get("cont-yn") != "Y" or not headers.get("next-key"):
+            break
+        cont_yn, next_key = "Y", headers["next-key"]
     return results
 
 
