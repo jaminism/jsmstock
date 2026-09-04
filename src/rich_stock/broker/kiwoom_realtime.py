@@ -206,7 +206,7 @@ class KiwoomRealtimeFeed:
         logger.debug("[kiwoom_realtime] 메시지: %s", msg)
 
     def _apply_real_data(self, rows: list[dict]) -> None:
-        now = pd.Timestamp.now()
+        now = pd.Timestamp.now()  # clock-ok: 수신시각 기록 — get_quote가 같은 시계로만 나이를 잰다
         with self._lock:
             for row in rows:
                 if row.get("type") != REALTIME_PRICE_TYPE:
@@ -267,7 +267,7 @@ class KiwoomRealtimeFeed:
             row = self._prices.get(ticker)
         if row is None:
             return None
-        age = (pd.Timestamp.now() - row["수신시각"]).total_seconds()
+        age = (pd.Timestamp.now() - row["수신시각"]).total_seconds()  # clock-ok: _apply_real_data가 같은 시계로 찍은 값과의 차이
         if age > max_age_sec:
             return None
         return row

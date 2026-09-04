@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 
@@ -185,3 +186,30 @@ def test_force_refresh_falls_back_to_full_fetch_when_no_cache(tmp_path, monkeypa
     requested_start = fake_fdr.calls[0][1]
     assert requested_start <= pd.Timestamp("2024-12-01")  # 캐시가 없으니 요청 시작일부터 전체 조회
     assert not result.empty
+
+
+def test_universe_cache_age_uses_epoch_not_local_naive_clock(tmp_path, monkeypatch):
+    """캐시 나이를 잴 때 파일 mtime(진짜 epoch)과 로컬 naive 시각을 섞으면 안 된다(2026-09-04).
+
+    예전 코드는 `pd.Timestamp.now() - pd.Timestamp(mtime, unit="s")`였는데, 뒤쪽은 epoch를
+    **UTC naive**로 바꾸고 앞쪽은 머신 로컬 naive라 KST 머신에서 나이가 항상 9시간 부풀려졌다
+    — TTL 1일짜리 캐시가 실질 15시간 만에 만료됐다(UTC 컨테이너에서만 우연히 맞았다)."""
+    import time
+
+    from rich_stock.data import universe
+
+    cache_path = tmp_path / "universe.parquet"
+    pd.DataFrame({"Code": ["005930"], "Name": ["삼성전자"], "Market": ["KOSPI"], "Marcap": [1]}).to_parquet(
+        cache_path, index=False
+    )
+    # TTL(1일) 안쪽이지만 9시간 skew가 있으면 만료로 오판되는 나이로 맞춘다.
+    age_sec = 20 * 3600
+    stamp = time.time() - age_sec
+    os.utime(cache_path, (stamp, stamp))
+
+    assert universe._load_cached(cache_path) is not None
+
+    # TTL을 넘긴 캐시는 여전히 정상적으로 버려야 한다.
+    stale = time.time() - 30 * 3600
+    os.utime(cache_path, (stale, stale))
+    assert universe._load_cached(cache_path) is None

@@ -13,6 +13,7 @@ KOSPI/KOSDAQ 전종목 스냅샷(시가총액 포함)을 제공하므로 이를 
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -45,7 +46,11 @@ def get_universe(cache_dir: str | Path = ".cache", min_market_cap: float | None 
 def _load_cached(cache_path: Path) -> pd.DataFrame | None:
     if not cache_path.exists():
         return None
-    age = pd.Timestamp.now() - pd.Timestamp(cache_path.stat().st_mtime, unit="s")
-    if age > _CACHE_TTL:
+    # 파일 mtime은 진짜 epoch인데 `pd.Timestamp(mtime, unit="s")`는 그걸 **UTC naive**로 만든다.
+    # 반면 `pd.Timestamp.now()`는 머신 로컬 naive라, KST 머신에서는 캐시 나이가 항상 9시간
+    # 부풀려져 TTL 1일짜리 캐시가 실질 15시간 만에 만료됐다(UTC 컨테이너에서만 우연히 맞았다).
+    # epoch끼리만 빼면 시간대와 무관하게 옳다(2026-09-04).
+    age_sec = time.time() - cache_path.stat().st_mtime  # clock-ok: 파일 mtime과 같은 진짜 epoch끼리만 뺀다
+    if age_sec > _CACHE_TTL.total_seconds():
         return None
     return pd.read_parquet(cache_path)
