@@ -583,6 +583,98 @@ def close_position(
     )
 
 
+def split_position_for_partial_exit(
+    conn: duckdb.DuckDBPyConnection,
+    position_id: str,
+    sold_quantity: float,
+    sell_price: float,
+    exit_order_no: str,
+    exit_reason: str,
+    sell_date: str | None = None,
+) -> str:
+    """청산 주문이 부분체결로 끝났을 때 포지션을 둘로 쪼갠다 — 실제로 팔린 수량만 이 포지션의
+    최종 수량으로 확정해 닫고(손익도 그 수량 기준으로 계산), 남은 수량은 진입가/손절가/익절가/
+    경과일을 그대로 물려받는 새 open 포지션으로 이어붙인다. Returns: 잔여분 새 position_id.
+
+    **왜 필요한가(2026-09-04)**: 예전엔 부분체결로 타임아웃되면 그 수량으로 그냥
+    close_position을 불러 포지션을 닫아버렸다. 그러면 팔리지 않고 계좌에 남은 주식이 DB에
+    아무 기록 없이 붕 떠서(9/4 실제로 008930 36주, 130660 338주가 이렇게 남았다) 이후
+    손절/익절 감시가 전혀 안 도는 무방비 물량이 되고, 다음 reconcile_with_broker가 그걸
+    "유령 물량"으로 감지해 스스로 킬스위치를 건다. 잔여분을 그냥 안 닫고 남기는 것만으로는
+    이미 팔린 부분의 실현손익이 사라지므로, 쪼개서 양쪽 다 정확히 기록한다.
+
+    잔여 포지션은 다음 tick의 sync_open_positions가 같은 청산 조건으로 다시 평가해 자동으로
+    재매도 주문을 낸다(잔여 수량 기준이라 초과매도 위험이 없다) — 유동성이 계속 없으면 30초
+    (EXIT_RETRY_TIMEOUT_SEC)마다 조금씩 팔며 그때마다 한 번 더 쪼개진다.
+    """
+    row = conn.execute(
+        """
+        SELECT decision_id, ticker, technique, signal_date, order_style, entry_order_no,
+               fill_price, fill_quantity, fill_date, stop_price, target_price,
+               max_hold_trading_days, trading_days_held, is_safety_override
+        FROM auto_positions WHERE position_id = ?
+        """,
+        [position_id],
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"position_id를 찾을 수 없습니다: {position_id}")
+    (decision_id, ticker, technique, signal_date, order_style, entry_order_no, fill_price,
+     fill_quantity, fill_date, stop_price, target_price, max_hold_trading_days,
+     trading_days_held, is_safety_override) = row
+    if fill_quantity is None or not (0 < sold_quantity < fill_quantity):
+        raise ValueError(
+            f"부분청산 수량이 올바르지 않습니다(보유 {fill_quantity}, 체결 {sold_quantity}) — "
+            "전량체결이면 close_position()을, 전혀 안 팔렸으면 재주문을 써야 합니다."
+        )
+    remaining = fill_quantity - sold_quantity
+    remaining_position_id = new_position_id(ticker)
+    split_note = f"부분청산 분할: 원포지션 {position_id} {fill_quantity:.0f}주 중 {sold_quantity:.0f}주 체결"
+
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        # 팔린 쪽 — decisions.quantity를 실제 팔린 수량으로 맞춘 뒤 닫아야 손익이 정확하다
+        # (close_decision이 buy_price*quantity 기준으로 pnl을 계산한다).
+        conn.execute(
+            "UPDATE auto_positions SET fill_quantity = ?, note = COALESCE(note || ' / ', '') || ? WHERE position_id = ?",
+            [sold_quantity, split_note, position_id],
+        )
+        if decision_id:
+            conn.execute("UPDATE decisions SET quantity = ? WHERE decision_id = ?", [sold_quantity, decision_id])
+            close_decision(conn, decision_id, sell_price, sell_date)
+        conn.execute(
+            """
+            UPDATE auto_positions
+            SET status = 'closed', exit_order_no = ?, exit_reason = ?, updated_at = current_timestamp
+            WHERE position_id = ?
+            """,
+            [exit_order_no, exit_reason, position_id],
+        )
+        # 남은 쪽 — 진입 조건(진입가/브라켓/경과일)을 그대로 물려받아 계속 추적한다.
+        new_decision_id_ = record_buy(
+            conn, ticker, fill_price, technique=technique,
+            signal_date=str(signal_date) if signal_date else None,
+            buy_date=str(fill_date) if fill_date else None, quantity=remaining,
+            note=f"auto_trader ({split_note}, 잔여 {remaining:.0f}주)",
+        )
+        conn.execute(
+            """
+            INSERT INTO auto_positions (position_id, decision_id, ticker, technique, signal_date, status,
+                                        order_style, entry_order_no, fill_price, fill_quantity, fill_date,
+                                        stop_price, target_price, max_hold_trading_days, trading_days_held,
+                                        is_safety_override, note)
+            VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [remaining_position_id, new_decision_id_, ticker, technique, signal_date, order_style, entry_order_no,
+             fill_price, remaining, fill_date, stop_price, target_price, max_hold_trading_days,
+             trading_days_held, is_safety_override, split_note],
+        )
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+    return remaining_position_id
+
+
 def expire_position(conn: duckdb.DuckDBPyConnection, position_id: str, note: str | None = None) -> None:
     """진입 유효기간이 지나도록 한 번도 체결 안 된 포지션을 종료한다(decisions row 자체가 없음)."""
     conn.execute(
@@ -713,6 +805,22 @@ def count_open_positions_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[s
     slow_tick — S5 전용 한도와 나머지 5개 기법 합산 한도를 독립적으로 관리)용으로 추가했다."""
     rows = conn.execute(
         "SELECT lower(technique), count(*) FROM decisions WHERE status = 'open' GROUP BY lower(technique)"
+    ).fetchall()
+    return {technique: count for technique, count in rows}
+
+
+def count_pending_entry_positions_by_technique(conn: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """기법(소문자)별 진입대기(pending_entry) 건수 — 아직 체결되지 않아 decisions row가 없는
+    상태다. 2026-09-04 추가: 동시보유 한도 계산이 count_open_positions_by_technique
+    (decisions.status='open')만 보고 있어서, 이미 주문/감시 중인 진입대기 물량이 한도에서
+    통째로 빠져 있었다 — 실측 시점에 S5가 open 6건 + 진입대기 7건인데 용량은 `10-6=4`로
+    계산돼 4건을 더 등록할 수 있었고, 전부 체결되면 17건 x 8% = 원금의 136%가 된다.
+    호출부(auto_trader.slow_tick)가 이 값을 open 건수에 더해 한도를 계산한다.
+
+    pending_exit는 일부러 제외한다 — 그 상태의 포지션은 decisions가 아직 'open'이라
+    count_open_positions_by_technique에 이미 잡혀 있어, 더하면 이중으로 센다."""
+    rows = conn.execute(
+        "SELECT lower(technique), count(*) FROM auto_positions WHERE status = 'pending_entry' GROUP BY lower(technique)"
     ).fetchall()
     return {technique: count for technique, count in rows}
 

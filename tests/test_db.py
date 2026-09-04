@@ -614,3 +614,79 @@ def test_count_open_positions_counts_decisions_open_status(conn):
     db.record_buy(conn, "035420", buy_price=200000)  # 수동매매도 슬롯 공유
 
     assert db.count_open_positions(conn) == 2
+
+
+def test_count_pending_entry_positions_by_technique(conn):
+    # 동시보유 한도 계산이 open(decisions)만 세면 이미 감시/주문 중인 진입대기 물량이 통째로
+    # 빠진다(2026-09-04) — 이 함수는 그 빠진 부분만 기법별로 센다.
+    db.create_pending_position(conn, "005930", technique="S5", signal_date="2026-09-01", order_style="fixed_limit")
+    db.create_pending_position(conn, "000660", technique="S5", signal_date="2026-09-01", order_style="fixed_limit")
+    db.create_pending_position(conn, "035420", technique="S1", signal_date="2026-09-01", order_style="fixed_limit")
+
+    filled_id = db.create_pending_position(conn, "051910", technique="S5", signal_date="2026-09-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, filled_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    exiting_id = db.create_pending_position(conn, "066570", technique="S5", signal_date="2026-09-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, exiting_id, fill_price=70000, fill_quantity=10,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+    db.update_pending_exit_order(conn, exiting_id, exit_order_no="000789", exit_reason="exit_stop")
+
+    # 체결된 것(open)과 청산대기(pending_exit)는 decisions.status='open'으로 이미 세지므로 제외
+    assert db.count_pending_entry_positions_by_technique(conn) == {"s5": 2, "s1": 1}
+
+
+# --- split_position_for_partial_exit (2026-09-04) -----------------------------
+# 청산이 부분체결로 끝났을 때 그냥 닫아버리면 안 팔린 주식이 DB 기록 없이 계좌에만 남아
+# 손절/익절 감시가 안 도는 무방비 물량이 된다(9/4 008930 36주, 130660 338주 실제 발생).
+
+
+def test_split_position_for_partial_exit_closes_sold_part_and_carries_remainder(conn):
+    position_id = db.create_pending_position(conn, "130660", technique="S5", signal_date="2026-09-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, position_id, fill_price=13000, fill_quantity=598, stop_price=12090,
+                              target_price=14950, max_hold_trading_days=4, fill_date="2026-09-02")
+    db.update_pending_exit_order(conn, position_id, exit_order_no="888", exit_reason="exit_stop")
+
+    remainder_id = db.split_position_for_partial_exit(
+        conn, position_id, sold_quantity=260, sell_price=12150,
+        exit_order_no="888", exit_reason="exit_stop", sell_date="2026-09-04",
+    )
+
+    sold_pos = conn.execute(
+        "SELECT status, fill_quantity, exit_order_no, exit_reason FROM auto_positions WHERE position_id = ?",
+        [position_id],
+    ).fetchone()
+    assert sold_pos == ("closed", 260, "888", "exit_stop")
+
+    sold_decision = conn.execute(
+        "SELECT status, quantity, sell_price, pnl FROM decisions WHERE decision_id = "
+        "(SELECT decision_id FROM auto_positions WHERE position_id = ?)", [position_id],
+    ).fetchone()
+    assert sold_decision == ("closed", 260, 12150, (12150 - 13000) * 260)
+
+    remainder = conn.execute(
+        "SELECT status, ticker, technique, fill_price, fill_quantity, stop_price, target_price, "
+        "max_hold_trading_days, trading_days_held, entry_order_no FROM auto_positions WHERE position_id = ?",
+        [remainder_id],
+    ).fetchone()
+    assert remainder == ("open", "130660", "S5", 13000, 338, 12090, 14950, 4, 0, None)
+    # 잔여분도 손익 추적이 이어지도록 새 open decision이 붙어야 한다
+    remainder_decision = conn.execute(
+        "SELECT status, quantity, buy_price FROM decisions WHERE decision_id = "
+        "(SELECT decision_id FROM auto_positions WHERE position_id = ?)", [remainder_id],
+    ).fetchone()
+    assert remainder_decision == ("open", 338, 13000)
+
+
+def test_split_position_for_partial_exit_rejects_full_or_zero_quantity(conn):
+    position_id = db.create_pending_position(conn, "005930", technique="S1", signal_date="2026-09-01", order_style="fixed_limit")
+    db.confirm_position_fill(conn, position_id, fill_price=70000, fill_quantity=100,
+                              stop_price=65100, target_price=74900, max_hold_trading_days=4)
+
+    for bad_qty in (0, 100, 101):
+        with pytest.raises(ValueError):
+            db.split_position_for_partial_exit(
+                conn, position_id, sold_quantity=bad_qty, sell_price=71000,
+                exit_order_no="888", exit_reason="exit_stop",
+            )
+    # 실패해도 원 포지션은 그대로여야 한다
+    assert db.get_open_positions(conn)[0]["fill_quantity"] == 100
