@@ -34,7 +34,7 @@ import pandas as pd
 
 from rich_stock.config import S3Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
 
 
 @dataclass
@@ -63,7 +63,12 @@ def detect_s3_signals(df: pd.DataFrame, config: S3Config) -> list[S3Signal]:
 
         rh = float(df["High"].iloc[i])
         lookback_start = max(0, i - config.pre_rally_lookback_days + 1)
-        rl = float(df["Low"].iloc[lookback_start : i + 1].min())
+        # RL(되돌림 저점)은 거래정지일의 0값을 빼고 구한다 — 안 그러면 되돌림선이 실제
+        # 가격대보다 훨씬 아래로 잡혀 매수가 조용히 안 일어난다(tradable_lows 독스트링 참고).
+        valid_lows = tradable_lows(df.iloc[lookback_start : i + 1])
+        if valid_lows.empty:
+            continue  # 구간 전체가 거래정지 — 0을 RL로 쓰느니 신호를 만들지 않는다
+        rl = float(valid_lows.min())
         s3_level = rh - (rh - rl) * config.fib_s3_ratio
 
         signals.append(S3Signal(ul_index=i, ul_date=df.index[i], high=rh, low=rl, s3_level=s3_level))

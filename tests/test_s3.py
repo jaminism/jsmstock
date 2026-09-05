@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from rich_stock.config import S3Config
 from rich_stock.strategies.s3 import (
@@ -154,3 +155,30 @@ def test_pre_rally_lookback_widens_low_anchor():
     assert narrow.low == 12000  # UL 당일 저가만 봄
     assert wide.low == 9000  # day0의 저가까지 포함
     assert wide.s3_level < narrow.s3_level
+
+
+def test_rl_excludes_halted_zero_volume_rows():
+    # test_s2.py의 동봉 테스트와 같은 버그 — S3도 RL을 필터 없이 구하고 있었다(2026-09-05 발견).
+    closes = [10000, 10000, 13000]
+    highs = [10000, 0, 13000]
+    lows = [9900, 0, 12000]
+    opens = [10000, 0, 12100]
+    df = make_df(closes, highs=highs, lows=lows, opens=opens)
+    df.loc[df.index[1], "Volume"] = 0
+
+    signals = detect_s3_signals(df, S3Config())
+
+    assert len(signals) == 1
+    assert signals[0].low == 9900
+    # S3 = 13000 - (13000-9900)*0.5 = 11450 (버그 상태였다면 13000-13000*0.5 = 6500)
+    assert signals[0].s3_level == pytest.approx(11450)
+
+
+def test_signal_skipped_when_every_lookback_row_is_halted():
+    closes = [10000, 13000]
+    highs = [0, 13000]
+    lows = [0, 12000]
+    df = make_df(closes, highs=highs, lows=lows)
+    df["Volume"] = 0
+
+    assert detect_s3_signals(df, S3Config()) == []

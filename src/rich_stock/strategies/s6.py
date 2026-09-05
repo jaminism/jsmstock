@@ -38,7 +38,7 @@ import pandas as pd
 
 from rich_stock.config import S6Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
 
 
 @dataclass
@@ -78,7 +78,12 @@ def detect_s6_signals(df: pd.DataFrame, config: S6Config) -> list[S6Signal]:
         lookback_start = max(0, streak_start - config.pre_rally_lookback_days)
         if lookback_start == streak_start:
             continue
-        pre_rally_low = float(df["Low"].iloc[lookback_start:streak_start].min())
+        # 거래정지일의 0값을 빼고 구한다 — 예전엔 0이 그대로 들어와 아래 `pre_rally_low <= 0`
+        # 가드에 걸려 정상 신호가 통째로 사라졌다(tradable_lows 독스트링 참고).
+        valid_lows = tradable_lows(df.iloc[lookback_start:streak_start])
+        if valid_lows.empty:
+            continue  # 구간 전체가 거래정지 — 상승률을 신뢰할 수 없다
+        pre_rally_low = float(valid_lows.min())
 
         peak_search_end = min(streak_end + config.peak_search_days, n - 1)
         peak_window = df["High"].iloc[streak_end : peak_search_end + 1]

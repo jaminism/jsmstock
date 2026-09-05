@@ -33,7 +33,7 @@ import pandas as pd
 
 from rich_stock.config import S4Config, S5Config, S45BaseConfig
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
+from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
 
 
 @dataclass
@@ -91,10 +91,8 @@ def detect_s45_signals(df: pd.DataFrame, config: S45BaseConfig) -> list[RallySig
             continue  # 이벤트 이전 데이터가 없으면 RL을 구할 수 없음
 
         window = df.iloc[lookback_start:i]
-        # 거래정지/이상거래로 OHLCV가 전부 0으로 찍힌 로우(예: 226340의 2026-08-10)가 섞이면
-        # Low=0이 최저가로 잡혀 되돌림선이 실제 가격대와 무관하게 왜곡된다(2026-08-12 실거래에서
-        # 발견 — 상/하한가 오류로 진입주문이 반복 거부됨). Volume>0인 로우만 RL 계산에 사용한다.
-        valid_lows = window.loc[window["Volume"] > 0, "Low"]
+        # 거래정지일의 0값을 RL로 오인하지 않도록 유효 거래일만 남긴다(tradable_lows 독스트링 참고).
+        valid_lows = tradable_lows(window)
         if valid_lows.empty:
             continue  # lookback 구간 전부 거래정지 등으로 유효 저가를 구할 수 없음
 
