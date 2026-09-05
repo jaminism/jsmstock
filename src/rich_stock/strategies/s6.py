@@ -38,7 +38,9 @@ import pandas as pd
 
 from rich_stock.config import S6Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
+from rich_stock.strategies.base import (
+    Bracket, EntryOrderPlan, Fill, Trade, TradePlan, first_tradable_index, is_tradable, tradable_lows,
+)
 
 
 @dataclass
@@ -123,8 +125,8 @@ def simulate_s6_trade(
     entry1_idx: int | None = None
     for i in range(signal.peak_index + 1, entry_window_end + 1):
         level = ma_short.iloc[i]
-        if pd.isna(level):
-            continue
+        if pd.isna(level) or not is_tradable(df.iloc[i]):
+            continue  # 거래정지일 — 러닝로우가 0으로 갱신돼 0원 매도가 만들어지던 자리
         if df["Low"].iloc[i] <= level:
             entry1_idx = i
             break
@@ -148,6 +150,9 @@ def simulate_s6_trade(
     while i < n:
         row = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(row):
+            i += 1
+            continue  # 러닝로우 갱신도 하면 안 된다(0으로 내려가면 전량매도가가 0이 된다)
         running_low = min(running_low, float(row["Low"]))
 
         if entry2_idx is None:
@@ -157,7 +162,9 @@ def simulate_s6_trade(
                 entry2_price = float(level20)
                 trade.fills.append(Fill(date, entry2_price, 1.0, "addon_ma20"))
                 shares += 1.0
-                force_idx = min(entry2_idx + config.hold_days - 1, n - 1)
+                force_idx = first_tradable_index(df, min(entry2_idx + config.hold_days - 1, n - 1))
+                if force_idx is None:
+                    force_idx = n - 1
                 i += 1
                 continue
         elif entry3_idx is None:
