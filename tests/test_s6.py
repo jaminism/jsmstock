@@ -293,3 +293,32 @@ def test_backtest_ticker_end_to_end_with_real_rolling_averages():
     ma3 = df["Close"].rolling(3).mean()
     entry_date = trade.fills[0].date
     assert trade.fills[0].price == pytest.approx(ma3.loc[entry_date])
+
+
+def test_pre_rally_low_excludes_halted_zero_volume_rows():
+    # S6는 RL이 0이면 `pre_rally_low <= 0` 가드에 걸려 **신호가 통째로 사라졌다** — S2/S3처럼
+    # 잘못된 값을 쓰는 게 아니라 조용히 놓치는 형태라 더 눈에 안 띈다(2026-09-05 발견).
+    # 랠리 전 구간(day0~1) 중 day1이 거래정지면 day0의 4800이 pre_rally_low여야 한다.
+    opens = [5000, 0, 5000, 6500, 8450, 15000, 14000]
+    highs = [5000, 0, 6500, 8450, 10985, 16000, 14500]
+    lows = [4800, 0, 5000, 6500, 8450, 14000, 13500]
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000]
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    df.loc[df.index[1], "Volume"] = 0
+
+    signals = detect_s6_signals(df, S6Config())
+
+    assert len(signals) == 1  # 수정 전에는 0건(가드에 걸려 사라짐)
+    assert signals[0].pre_rally_low == 4800
+
+
+def test_signal_skipped_when_every_pre_rally_row_is_halted():
+    opens = [5000, 0, 5000, 6500, 8450, 15000, 14000]
+    highs = [5000, 0, 6500, 8450, 10985, 16000, 14500]
+    lows = [4800, 0, 5000, 6500, 8450, 14000, 13500]
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000]
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    df.loc[df.index[0], "Volume"] = 0
+    df.loc[df.index[1], "Volume"] = 0
+
+    assert detect_s6_signals(df, S6Config()) == []

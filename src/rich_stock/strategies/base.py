@@ -150,3 +150,18 @@ def evaluate_bracket(bracket: Bracket, current_price: float, trading_days_held: 
     if bracket.max_hold_trading_days is not None and trading_days_held >= bracket.max_hold_trading_days:
         return "exit_forced_hold"
     return "hold"
+
+
+def tradable_lows(window: pd.DataFrame) -> pd.Series:
+    """거래정지/이상거래로 OHLCV가 0으로 찍힌 로우를 제외한 저가 시리즈.
+
+    되돌림 저점(RL)을 구할 때 이 필터를 반드시 거쳐야 한다 — 거래정지일은 데이터 제공처가
+    OHLC를 전부 0으로 내려주는데(Close만 직전 종가로 이어짐), 그 0이 구간 최저가로 잡히면
+    되돌림선이 실제 가격대와 무관하게 훨씬 아래로 내려간다. 2026-08-12에 S4/S5에서 이 버그가
+    실거래로 드러나(226340: 상/하한가 오류로 진입주문 반복 거부) 그때 s45.py만 고쳤는데,
+    2026-09-05에 S2/S3도 같은 계산을 필터 없이 하고 있었음이 확인됐다(같은 종목 8/11 신호의
+    RL이 0으로 저장되어 있었고, 그 결과 S2 진입선이 6,826원이어야 할 자리에 6,158원으로 잡혀
+    8/13 종가 6,530원에서 체결됐어야 할 매수를 조용히 놓쳤다). 계산이 네 군데로 흩어져 한 곳만
+    고쳐진 것이 재발의 직접 원인이라, 이후로는 전 기법이 이 헬퍼 하나를 공유한다.
+    """
+    return window.loc[window["Volume"] > 0, "Low"]

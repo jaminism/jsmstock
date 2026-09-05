@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from rich_stock.config import S2Config
 from rich_stock.strategies.s2 import (
@@ -170,3 +171,35 @@ def test_pre_rally_lookback_widens_low_anchor():
     assert narrow.low == 12000  # UL 당일 저가만 봄
     assert wide.low == 9000  # day0의 저가까지 포함
     assert wide.s2_level < narrow.s2_level
+
+
+def test_rl_excludes_halted_zero_volume_rows():
+    # lookback 구간에 거래정지(Volume=0, OHLC가 0)로우가 섞이면 그 저가(0)를 RL로 오인해선
+    # 안 된다 — S4/S5는 2026-08-12에 고쳤지만 S2/S3는 같은 계산을 필터 없이 하고 있었다
+    # (2026-09-05 발견, 226340의 8/11 신호 RL이 실제로 0으로 저장돼 있었다). RL이 0이 되면
+    # 되돌림선이 실제 가격대보다 훨씬 아래로 잡혀 매수가 조용히 일어나지 않는다.
+    closes = [10000, 10000, 13000]
+    highs = [10000, 0, 13000]
+    lows = [9900, 0, 12000]
+    opens = [10000, 0, 12100]
+    df = make_df(closes, highs=highs, lows=lows, opens=opens)
+    df.loc[df.index[1], "Volume"] = 0
+
+    signals = detect_s2_signals(df, S2Config())
+
+    assert len(signals) == 1
+    assert signals[0].low == 9900  # 0(거래정지일)이 아니라 유효 거래일 중 최저가
+    # S2 = 13000 - (13000-9900)*0.236 = 12268.4 (버그 상태였다면 13000-13000*0.236 = 9932)
+    assert signals[0].s2_level == pytest.approx(12268.4)
+
+
+def test_signal_skipped_when_every_lookback_row_is_halted():
+    # 방어적 케이스 — 구간에 유효 거래일이 하나도 없으면 0을 RL로 쓰느니 신호를 만들지 않는다
+    # (S4/S5의 동일 가드와 같은 판단).
+    closes = [10000, 13000]
+    highs = [0, 13000]
+    lows = [0, 12000]
+    df = make_df(closes, highs=highs, lows=lows)
+    df["Volume"] = 0
+
+    assert detect_s2_signals(df, S2Config()) == []
