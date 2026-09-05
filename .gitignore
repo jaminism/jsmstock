@@ -35,6 +35,9 @@ kiwoom_credentials.json
 # Slack Incoming Webhook URL — 절대 커밋 금지
 slack_credentials.json
 
+# DART 전자공시 OpenAPI 키 — 절대 커밋 금지
+dart_credentials.json
+
 # 계좌번호/잔고가 찍힌 스크린샷 등 임시 캡처 파일 — 로컬 전용
 mm.png
 
