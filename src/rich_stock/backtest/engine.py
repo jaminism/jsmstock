@@ -8,6 +8,7 @@ from typing import Callable
 
 import pandas as pd
 
+from rich_stock.backtest.filters import drop_administrative_issues, keep_theme_leader
 from rich_stock.backtest.metrics import Metrics, compute_metrics
 from rich_stock.backtest.portfolio import PortfolioResult, allocate_portfolio
 from rich_stock.config import (
@@ -73,11 +74,38 @@ def run_backtest(
     for ticker, df in ohlcv.items():
         all_trades.extend(backtest_ticker_fn(df, ticker, config))
 
+    all_trades = _apply_discretionary_filters(all_trades, ohlcv, config)
     all_trades = apply_slippage(all_trades, config.slippage_pct)
 
     portfolio = allocate_portfolio(all_trades, ohlcv, config)
     metrics = compute_metrics(portfolio, all_trades=all_trades)
     return BacktestResult(trades=all_trades, portfolio=portfolio, metrics=metrics)
+
+
+def _apply_discretionary_filters(
+    trades: list[Trade], ohlcv: dict[str, pd.DataFrame], config: PortfolioConfig
+) -> list[Trade]:
+    """원문의 재량 배제 필터 근사를 적용한다(전부 기본값 off — config.py 주석에 측정 결과).
+
+    종목 단위 `backtest_ticker`가 아니라 여기에 두는 이유는 "같은 날 어느 종목이 1등인가"처럼
+    **여러 종목을 가로질러 봐야** 판단할 수 있는 규칙이기 때문이다. 외부 데이터(섹터/관리종목)
+    조회는 플래그가 켜졌을 때만 한다 — 꺼져 있으면 네트워크를 타지 않는다."""
+    if getattr(config, "theme_leader_only", False):
+        from rich_stock.data.sectors import get_sector_map
+
+        trades, _ = keep_theme_leader(trades, ohlcv, get_sector_map())
+    if getattr(config, "exclude_administrative_issues", False):
+        import FinanceDataReader as fdr
+
+        adm = fdr.StockListing("KRX-ADMINISTRATIVE")
+        adm["DesignationDate"] = pd.to_datetime(adm["DesignationDate"], errors="coerce")
+        designated = {
+            str(sym).zfill(6): date
+            for sym, date in zip(adm["Symbol"], adm["DesignationDate"])
+            if pd.notna(date)
+        }
+        trades, _ = drop_administrative_issues(trades, designated)
+    return trades
 
 
 def run_s1_backtest(ohlcv: dict[str, pd.DataFrame], config: S1Config | None = None) -> BacktestResult:
