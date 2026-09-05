@@ -322,3 +322,28 @@ def test_signal_skipped_when_every_pre_rally_row_is_halted():
     df.loc[df.index[1], "Volume"] = 0
 
     assert detect_s6_signals(df, S6Config()) == []
+
+
+# --- 2026-09-05 거래정지일 ------------------------------------------------------------
+
+
+def test_halted_day_does_not_create_zero_price_exit():
+    """거래정지일의 Low=0이 러닝로우를 갱신하면 전량매도가가 `0 * 1.17 = 0`이 되고
+    `High >= 0`은 항상 참이라 **0원 매도(-100%)**가 기록된다 — 실측으로 S6 체결의 10.5%가
+    정지일에 걸려 평균수익률이 -10.18%로 나오고 있었다(정지일 제외 시 -1.03%)."""
+    opens = [5000, 5000, 5000, 6500, 8450, 15000, 14000] + [14000] * 23
+    highs = [5000, 5000, 6500, 8450, 10985, 16000, 14500] + [14100] * 23
+    lows = [4800, 4900, 5000, 6500, 8450, 14000, 13500] + [13900] * 23
+    closes = [5000, 5000, 6500, 8450, 10985, 15000, 14000] + [14000] * 23
+    df, _dates = _detect_df(opens, highs, lows, closes)
+    # 진입 이후 구간에 거래정지일을 하나 끼워넣는다(OHLC 0, Close는 직전 종가 이월)
+    halt = df.index[25]
+    df.loc[halt, ["Open", "High", "Low"]] = 0.0
+    df.loc[halt, "Volume"] = 0
+
+    trades = backtest_ticker(df, "TEST", S6Config())
+
+    for t in trades:
+        for f in t.fills:
+            assert f.price > 0, f"0원 체결이 생겼다: {f.date.date()} {f.reason}"
+            assert f.date != halt, f"거래정지일에 체결이 생겼다: {f.reason}"

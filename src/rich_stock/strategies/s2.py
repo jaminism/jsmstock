@@ -29,7 +29,9 @@ import pandas as pd
 
 from rich_stock.config import S2Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
+from rich_stock.strategies.base import (
+    Bracket, EntryOrderPlan, Fill, Trade, TradePlan, first_tradable_index, is_tradable, tradable_lows,
+)
 
 
 @dataclass
@@ -80,6 +82,8 @@ def simulate_s2_trade(df: pd.DataFrame, signal: S2Signal, config: S2Config, tick
 
     for i in range(signal.ul_index + 1, entry_window_end + 1):
         row = df.iloc[i]
+        if not is_tradable(row):
+            continue  # 거래정지일 — 종가는 직전 종가가 이월될 뿐 체결은 없다
         if row["Close"] <= signal.s2_level:
             entry_idx = i
             trade.fills.append(Fill(df.index[i], float(row["Close"]), 1.0, "entry_s2"))
@@ -90,13 +94,18 @@ def simulate_s2_trade(df: pd.DataFrame, signal: S2Signal, config: S2Config, tick
 
     shares = 1.0
     entry_price = trade.fills[0].price
-    force_idx = min(entry_idx + config.hold_days - 1, n - 1)
+    # 강제청산일이 거래정지일이면 그날은 못 판다 — 다음 거래 가능일로 미룬다.
+    force_idx = first_tradable_index(df, min(entry_idx + config.hold_days - 1, n - 1))
+    if force_idx is None:
+        force_idx = n - 1
     target_price = signal.high
     stop_price = entry_price * (1 + config.stop_loss_pct)
 
     for i in range(entry_idx + 1, force_idx + 1):
         row = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(row):
+            continue
 
         if row["Low"] <= stop_price:
             trade.fills.append(Fill(date, stop_price, -shares, "exit_stop_loss"))

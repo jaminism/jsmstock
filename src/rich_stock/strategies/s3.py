@@ -34,7 +34,9 @@ import pandas as pd
 
 from rich_stock.config import S3Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
+from rich_stock.strategies.base import (
+    Bracket, EntryOrderPlan, Fill, Trade, TradePlan, first_tradable_index, is_tradable, tradable_lows,
+)
 
 
 @dataclass
@@ -85,6 +87,8 @@ def simulate_s3_trade(df: pd.DataFrame, signal: S3Signal, config: S3Config, tick
 
     for i in range(signal.ul_index + 1, entry_window_end + 1):
         row = df.iloc[i]
+        if not is_tradable(row):
+            continue  # 거래정지일 — Low=0이 어떤 레벨이든 만족시키는 걸 막는다
         if row["Low"] <= signal.s3_level:
             entry_idx = i
             trade.fills.append(Fill(df.index[i], signal.s3_level, 1.0, "entry_s3"))
@@ -94,13 +98,18 @@ def simulate_s3_trade(df: pd.DataFrame, signal: S3Signal, config: S3Config, tick
         return None
 
     shares = 1.0
-    force_idx = min(entry_idx + config.hold_days - 1, n - 1)
+    # 강제청산일이 거래정지일이면 그날은 못 판다 — 다음 거래 가능일로 미룬다.
+    force_idx = first_tradable_index(df, min(entry_idx + config.hold_days - 1, n - 1))
+    if force_idx is None:
+        force_idx = n - 1
     target_price = signal.high
     stop_price = signal.s3_level * (1 + config.stop_loss_pct)
 
     for i in range(entry_idx + 1, force_idx + 1):
         row = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(row):
+            continue
 
         if row["Low"] <= stop_price:
             trade.fills.append(Fill(date, stop_price, -shares, "exit_stop_loss"))

@@ -187,3 +187,36 @@ def test_addon_and_breakeven_partial():
     reasons = [f.reason for f in trade.fills]
     assert reasons == ["entry_r1", "addon_r2", "exit_breakeven", "exit_target_r0"]
     assert trade.is_closed
+
+# --- 2026-09-05 진입 조건을 지정가 모델로 통일 -------------------------------------------
+
+
+def test_entry_fills_when_price_gaps_below_r1():
+    """R1에 지정가를 걸어뒀다면 갭하락일에도 체결된다 — 예전 조건(`Low <= R1 <= High`)은
+    하루 종일 R1 아래에서 거래된 날을 진입 없음으로 처리해, 실측 2,036 신호 중 94건(4.6%)에서
+    진입 시점이 달라졌다."""
+    # day1 상한가(고가 13000, 전일종가 10000) → R1 = 13000 - 1000 = 12000
+    # day2가 R1보다 한참 아래에서만 거래(고가 11500 < R1)
+    closes = [10000, 13000, 11200, 11300, 11400]
+    highs = [10000, 13000, 11500, 11450, 11500]
+    lows = [9800, 12000, 11000, 11100, 11200]
+    df = make_df(closes, highs=highs, lows=lows)
+
+    trades = backtest_ticker(df, "TEST", S1Config())
+
+    assert len(trades) == 1
+    assert trades[0].fills[0].reason == "entry_r1"
+    assert trades[0].fills[0].date == df.index[2]
+
+
+def test_no_entry_on_halted_day():
+    closes = [10000, 13000, 13000, 11200, 11300]
+    highs = [10000, 13000, 0, 12500, 11450]
+    lows = [9800, 12000, 0, 11000, 11100]
+    df = make_df(closes, highs=highs, lows=lows)
+    df.loc[df.index[2], "Volume"] = 0
+
+    trades = backtest_ticker(df, "TEST", S1Config())
+
+    assert len(trades) == 1
+    assert trades[0].fills[0].date == df.index[3]

@@ -182,3 +182,39 @@ def test_signal_skipped_when_every_lookback_row_is_halted():
     df["Volume"] = 0
 
     assert detect_s3_signals(df, S3Config()) == []
+
+
+# --- 2026-09-05 거래정지일 / 매수 가능 기간 -------------------------------------------
+
+
+def test_no_entry_on_halted_day():
+    """거래정지일은 Low=0이라 어떤 되돌림선도 만족시킨다 — 그날 체결이 생기면 안 된다.
+
+    실측(캐시 2,713종목): 이 방어가 없을 때 S3 체결의 10.8%가 정지일에 발생했고, 그것만 빼면
+    CAGR이 +18.51% → -0.30%로 떨어졌다. 공표 성과의 거의 전부가 이 산물이었다."""
+    # day1 상한가(고가 13000), day2가 거래정지, day3에 정상적으로 되돌림선(11400)을 터치
+    closes = [10000, 13000, 13000, 11000, 11200]
+    highs = [10000, 13000, 0, 11500, 11400]
+    lows = [9800, 12000, 0, 11000, 11100]
+    df = make_df(closes, highs=highs, lows=lows)
+    df.loc[df.index[2], "Volume"] = 0
+
+    trades = backtest_ticker(df, "TEST", S3Config())
+
+    assert len(trades) == 1
+    entry = trades[0].fills[0]
+    assert entry.date == df.index[3]  # 정지일(day2)이 아니라 다음 거래일에 진입
+    assert entry.reason == "entry_s3"
+
+
+def test_entry_window_follows_source_rule():
+    """원문 "고점 갱신일 포함 4일차까지" — 상한가 다음날부터 3거래일까지만 진입 유효."""
+    assert S3Config().entry_valid_days == 3
+
+    # 상한가(day1) 후 day2~day4는 되돌림선 위에서만 놀다가 day5에 처음 터치 → 진입 없음
+    closes = [10000, 13000, 12800, 12700, 12600, 11000]
+    highs = [10000, 13000, 12900, 12800, 12700, 11500]
+    lows = [9800, 12000, 12700, 12600, 12500, 11000]
+    df = make_df(closes, highs=highs, lows=lows)
+
+    assert backtest_ticker(df, "TEST", S3Config()) == []

@@ -29,7 +29,9 @@ import pandas as pd
 
 from rich_stock.config import S1Config
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan
+from rich_stock.strategies.base import (
+    Bracket, EntryOrderPlan, Fill, Trade, TradePlan, first_tradable_index, is_tradable,
+)
 from rich_stock.strategies.qualitative import QualScore, compute_qualitative_score
 
 
@@ -102,7 +104,14 @@ def simulate_s1_trade(df: pd.DataFrame, signal: S1Signal, config: S1Config, tick
     # 1) 진입(R1) 탐색: 상한가 발생 후 entry_valid_days 이내
     for i in range(signal.ul_index + 1, entry_window_end + 1):
         row = df.iloc[i]
-        if row["Low"] <= signal.r1 <= row["High"]:
+        if not is_tradable(row):
+            continue  # 거래정지일 — 체결이 있을 수 없다(is_tradable 독스트링 참고)
+        # **지정가 모델로 통일(2026-09-05)**: 예전 조건은 `Low <= R1 <= High`라 갭하락으로
+        # 하루 종일 R1 아래에서 거래된 날(High < R1)은 진입을 통째로 건너뛰었다 — 실제로
+        # R1에 지정가를 걸어뒀다면 시가에 체결됐을 자리다(실측 2,036 신호 중 94건, 4.6%).
+        # 다른 기법(S3/S5/S6)이 전부 쓰는 `Low <= level` 터치 모델로 맞춘다. 체결가를 시가가
+        # 아니라 R1로 잡는 건 실제보다 비싸게 산 것으로 계산하는 쪽이라 보수적이다.
+        if row["Low"] <= signal.r1:
             entry_idx = i
             trade.fills.append(Fill(df.index[i], signal.r1, 1.0, "entry_r1"))
             break
@@ -114,11 +123,15 @@ def simulate_s1_trade(df: pd.DataFrame, signal: S1Signal, config: S1Config, tick
     shares = 1.0
     addon_done = False
     breakeven_done = False
-    force_idx = min(entry_idx + config.hold_days - 1, n - 1)
+    force_idx = first_tradable_index(df, min(entry_idx + config.hold_days - 1, n - 1))
+    if force_idx is None:
+        force_idx = n - 1
 
     for i in range(entry_idx + 1, force_idx + 1):
         row = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(row):
+            continue
 
         if row["Low"] <= signal.r3:
             trade.fills.append(Fill(date, signal.r3, -shares, "exit_stop_r3"))

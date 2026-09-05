@@ -152,6 +152,36 @@ def evaluate_bracket(bracket: Bracket, current_price: float, trading_days_held: 
     return "hold"
 
 
+def is_tradable(row) -> bool:
+    """그날 실제로 거래가 있었는가 — 거래정지일이면 False.
+
+    거래정지일은 데이터 제공처가 OHLC를 전부 0으로 내려준다(Close만 직전 종가로 이어짐).
+    매매 시뮬레이션의 진입/손절 판정은 대부분 `row["Low"] <= level` 형태라, **Low=0이 들어가면
+    어떤 레벨이든 무조건 만족해버린다** — 거래가 아예 없던 날에 체결이 생긴다.
+
+    2026-09-05 실측(캐시 2,713종목, 정지 행 76,003개): S3 체결의 10.8%, S6의 10.5%가 정지일에
+    발생하고 있었다. 방향도 양쪽이다 — S3는 정지일에 진입해 다음날 익절하는 **가짜 수익**
+    (002990: 거래 없던 2026-07-08에 9,835원 진입 → 다음날 12,350원, +25.6%)을 만들고,
+    S6은 러닝로우가 0으로 갱신돼 `저점*1.17 = 0`이 되고 `High >= 0`이 항상 참이라
+    **0원 매도(-100%)**라는 가짜 손실을 만든다. 정지일을 빼면 S3 CAGR이 +18.51%에서
+    -0.30%로 떨어졌다 — 공표 성과의 거의 전부가 이 산물이었다.
+
+    (같은 뿌리의 신호 탐지 쪽 버그는 tradable_lows로 따로 막는다.)
+    """
+    return float(row["Volume"]) > 0
+
+
+def first_tradable_index(df: pd.DataFrame, start: int) -> int | None:
+    """`start` 이상에서 실제로 거래가 있었던 첫 행의 위치. 없으면 None.
+
+    시간청산(4일차 강제매도)이 하필 거래정지일에 걸리면 그날은 팔 수 없다 — 다음 거래 가능일로
+    미룬다. 그냥 건너뛰면 포지션이 데이터 끝까지 남아 전혀 다른 결과가 된다."""
+    for i in range(max(0, start), len(df)):
+        if is_tradable(df.iloc[i]):
+            return i
+    return None
+
+
 def tradable_lows(window: pd.DataFrame) -> pd.Series:
     """거래정지/이상거래로 OHLCV가 0으로 찍힌 로우를 제외한 저가 시리즈.
 

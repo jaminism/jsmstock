@@ -33,7 +33,9 @@ import pandas as pd
 
 from rich_stock.config import S4Config, S5Config, S45BaseConfig
 from rich_stock.limits import is_limit_up_day
-from rich_stock.strategies.base import Bracket, EntryOrderPlan, Fill, Trade, TradePlan, tradable_lows
+from rich_stock.strategies.base import (
+    Bracket, EntryOrderPlan, Fill, Trade, TradePlan, first_tradable_index, is_tradable, tradable_lows,
+)
 
 
 @dataclass
@@ -120,13 +122,18 @@ def simulate_s4_trade(
     trade.fills.append(Fill(df.index[entry_idx], entry_price, 1.0, "entry_s4"))
 
     shares = 1.0
-    force_idx = min(entry_idx + config.hold_days - 1, n - 1)
+    # 강제청산일이 거래정지일이면 그날은 못 판다 — 다음 거래 가능일로 미룬다.
+    force_idx = first_tradable_index(df, min(entry_idx + config.hold_days - 1, n - 1))
+    if force_idx is None:
+        force_idx = n - 1
     target_price = signal.high
     stop_price = entry_price * (1 + config.stop_loss_pct)
 
     for i in range(entry_idx + 1, force_idx + 1):
         r = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(r):
+            continue
         if r["Low"] <= stop_price:
             trade.fills.append(Fill(date, stop_price, -shares, "exit_stop_loss"))
             shares = 0.0
@@ -159,6 +166,8 @@ def simulate_s5_trade(
 
     for i in range(signal.event_index, entry_window_end + 1):
         row = df.iloc[i]
+        if not is_tradable(row):
+            continue  # 거래정지일 — Low=0이 어떤 레벨이든 만족시키는 걸 막는다
         if row["Low"] <= level:
             entry_idx = i
             trade.fills.append(Fill(df.index[i], level, 1.0, "entry_s5"))
@@ -168,13 +177,18 @@ def simulate_s5_trade(
         return None
 
     shares = 1.0
-    force_idx = min(entry_idx + config.hold_days - 1, n - 1)
+    # 강제청산일이 거래정지일이면 그날은 못 판다 — 다음 거래 가능일로 미룬다.
+    force_idx = first_tradable_index(df, min(entry_idx + config.hold_days - 1, n - 1))
+    if force_idx is None:
+        force_idx = n - 1
     target_price = level * (1 + config.profit_target_pct)
     stop_price = level * (1 + config.stop_loss_pct)
 
     for i in range(entry_idx + 1, force_idx + 1):
         row = df.iloc[i]
         date = df.index[i]
+        if not is_tradable(row):
+            continue
         if row["Low"] <= stop_price:
             trade.fills.append(Fill(date, stop_price, -shares, "exit_stop_loss"))
             shares = 0.0
