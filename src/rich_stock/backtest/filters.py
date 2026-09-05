@@ -69,6 +69,47 @@ def keep_theme_leader(
     return kept, dropped
 
 
+ADVERSE_DISCLOSURE_PATTERN = (
+    "횡령|배임|관리종목|불성실공시|감사의견|의견거절|회생절차|상장폐지|매매거래정지"
+)
+"""원문 배제 리스트의 "관리종목/악재"에 해당하는 공시 보고서명 패턴.
+
+**이건 재량 판단의 근사가 아니라 사실 데이터다** — 무공방/긴N자/동테마 같은 필터는 강사의
+차트 판단을 흉내 내야 해서 번번이 실패했지만(2026-08-09, 2026-09-06 두 차례), 공시는
+"났느냐 안 났느냐"라 근사가 아니다. 실제로 이 필터만 성과가 개선됐다."""
+
+RIGHTS_DISCLOSURE_PATTERN = "유상증자결정|무상증자결정|감자결정|주식분할결정|주식병합결정"
+"""원문 배제 리스트의 "유증무증권리락 구간 내 금지"에 해당하는 공시.
+
+권리락일 자체는 공시에 없으므로 **공시일로부터 일정 기간**을 배제 구간으로 근사한다
+(공시에서 권리락까지 통상 한 달 이내)."""
+
+
+def drop_after_disclosure(
+    trades: list[Trade],
+    disclosure_dates: dict[str, list[pd.Timestamp]],
+    window_days: int,
+) -> tuple[list[Trade], list[Trade]]:
+    """공시일로부터 `window_days` 이내에 발생한 신호의 트레이드를 걸러낸다.
+
+    **공시일 이후만 본다** — 신호일이 공시일보다 앞서면 그때는 알 수 없었던 정보이므로
+    배제하면 미래 정보를 쓰는 게 된다.
+
+    Args:
+        disclosure_dates: {종목코드: [공시일...]}
+        window_days: 공시일 기준 며칠까지 배제할지(캘린더일)
+    """
+    kept, dropped = [], []
+    limit = pd.Timedelta(days=window_days)
+    for t in trades:
+        dates = disclosure_dates.get(t.ticker)
+        if dates and any(d <= t.signal_date <= d + limit for d in dates):
+            dropped.append(t)
+        else:
+            kept.append(t)
+    return kept, dropped
+
+
 def drop_administrative_issues(
     trades: list[Trade],
     designated_at: dict[str, pd.Timestamp],
