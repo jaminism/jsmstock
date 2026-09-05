@@ -8,7 +8,11 @@ from typing import Callable
 
 import pandas as pd
 
-from rich_stock.backtest.filters import drop_administrative_issues, keep_theme_leader
+from rich_stock.backtest.filters import (
+    drop_administrative_issues,
+    drop_after_disclosure,
+    keep_theme_leader,
+)
 from rich_stock.backtest.metrics import Metrics, compute_metrics
 from rich_stock.backtest.portfolio import PortfolioResult, allocate_portfolio
 from rich_stock.config import (
@@ -90,6 +94,16 @@ def _apply_discretionary_filters(
     종목 단위 `backtest_ticker`가 아니라 여기에 두는 이유는 "같은 날 어느 종목이 1등인가"처럼
     **여러 종목을 가로질러 봐야** 판단할 수 있는 규칙이기 때문이다. 외부 데이터(섹터/관리종목)
     조회는 플래그가 켜졌을 때만 한다 — 꺼져 있으면 네트워크를 타지 않는다."""
+    adverse_days = getattr(config, "exclude_adverse_disclosure_days", 0)
+    rights_days = getattr(config, "exclude_rights_offering_days", 0)
+    if adverse_days or rights_days:
+        from rich_stock.data.disclosures import load_disclosure_dates
+
+        if adverse_days:
+            trades, _ = drop_after_disclosure(trades, load_disclosure_dates("adverse"), adverse_days)
+        if rights_days:
+            trades, _ = drop_after_disclosure(trades, load_disclosure_dates("rights"), rights_days)
+
     if getattr(config, "theme_leader_only", False):
         from rich_stock.data.sectors import get_sector_map
 

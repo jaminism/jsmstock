@@ -7,7 +7,11 @@
 
 import pandas as pd
 
-from rich_stock.backtest.filters import drop_administrative_issues, keep_theme_leader
+from rich_stock.backtest.filters import (
+    drop_administrative_issues,
+    drop_after_disclosure,
+    keep_theme_leader,
+)
 from rich_stock.strategies.base import Fill, Trade
 
 
@@ -98,5 +102,48 @@ def test_administrative_filter_ignores_unlisted_tickers():
     trades = [_trade("AAA", "2024-06-10")]
 
     kept, dropped = drop_administrative_issues(trades, {})
+
+    assert len(kept) == 1 and dropped == []
+
+
+# --- 공시 기반 배제 (2026-09-06) ------------------------------------------------------
+# 재량 판단을 흉내 낸 근사 필터들이 번번이 실패한 것과 달리, 공시는 "났느냐 안 났느냐"라
+# 근사가 아니다 — 실제로 이 필터에서 처음 성과 개선이 나왔다.
+
+
+def test_disclosure_filter_drops_signals_inside_window():
+    trades = [_trade("AAA", "2024-03-10"), _trade("AAA", "2024-05-20")]
+    disclosures = {"AAA": [pd.Timestamp("2024-03-01")]}
+
+    kept, dropped = drop_after_disclosure(trades, disclosures, window_days=30)
+
+    assert [t.signal_date.date().isoformat() for t in dropped] == ["2024-03-10"]
+    assert [t.signal_date.date().isoformat() for t in kept] == ["2024-05-20"]
+
+
+def test_disclosure_filter_ignores_signals_before_disclosure():
+    """공시 전 신호까지 지우면 그때는 알 수 없던 정보를 쓰는 셈이다 — 미래 정보 금지."""
+    trades = [_trade("AAA", "2024-02-20")]
+    disclosures = {"AAA": [pd.Timestamp("2024-03-01")]}
+
+    kept, dropped = drop_after_disclosure(trades, disclosures, window_days=90)
+
+    assert len(kept) == 1 and dropped == []
+
+
+def test_disclosure_filter_window_boundary_is_inclusive():
+    trades = [_trade("AAA", "2024-03-31"), _trade("AAA", "2024-04-01")]
+    disclosures = {"AAA": [pd.Timestamp("2024-03-01")]}
+
+    kept, dropped = drop_after_disclosure(trades, disclosures, window_days=30)
+
+    assert len(dropped) == 1 and dropped[0].signal_date == pd.Timestamp("2024-03-31")
+    assert len(kept) == 1
+
+
+def test_disclosure_filter_leaves_untracked_tickers():
+    trades = [_trade("ZZZ", "2024-03-10")]
+
+    kept, dropped = drop_after_disclosure(trades, {"AAA": [pd.Timestamp("2024-03-01")]}, 30)
 
     assert len(kept) == 1 and dropped == []
